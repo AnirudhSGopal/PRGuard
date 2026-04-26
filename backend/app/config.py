@@ -21,7 +21,7 @@ class Settings(BaseSettings):
         dotenv_settings,
         file_secret_settings,
     ):
-        return (init_settings, dotenv_settings, file_secret_settings)
+        return (init_settings, env_settings, dotenv_settings, file_secret_settings)
 
     GITHUB_APP_ID: str = ""
     GITHUB_PRIVATE_KEY: str = ""
