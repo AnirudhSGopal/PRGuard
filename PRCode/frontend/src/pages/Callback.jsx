@@ -12,27 +12,38 @@ export default function Callback() {
 
     const params = new URLSearchParams(window.location.search)
     const installationId = params.get('installation_id')
-    const error          = params.get('error')
+    const error = params.get('error')
 
     if (error) {
       setStatus('GitHub login failed. Redirecting...')
       timerId = setTimeout(() => navigate('/login'), 2000)
-      return () => {
-        if (timerId) clearTimeout(timerId)
-      }
+      return () => { if (timerId) clearTimeout(timerId) }
     }
 
     if (installationId) {
       localStorage.setItem('prguard_installation_id', installationId)
       setStatus('App installed! Redirecting...')
       timerId = setTimeout(() => navigate('/dashboard'), 1500)
-      return () => {
-        if (timerId) clearTimeout(timerId)
-      }
+      return () => { if (timerId) clearTimeout(timerId) }
     }
 
     const resolveSession = async () => {
-      // Wait briefly for the session cookie to be set
+      // ✅ Read the payload injected by backend _build_redirect_page
+      const injected = window.__PRGUARD_OAUTH__
+
+      if (injected?.role === 'user' && injected?.user_id) {
+        setStatus('Login successful! Redirecting...')
+        timerId = setTimeout(() => navigate('/dashboard', { replace: true }), 600)
+        return
+      }
+
+      if (injected?.role === 'admin') {
+        setStatus('Admin accounts must use email login. Redirecting...')
+        timerId = setTimeout(() => navigate('/admin/login?reason=admin_local_login_required', { replace: true }), 600)
+        return
+      }
+
+      // Fallback: cookie-based check (works in same-domain or dev)
       await new Promise(r => setTimeout(r, 800))
       try {
         const session = await getMe()
