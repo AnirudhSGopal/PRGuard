@@ -3,8 +3,25 @@ import { getAdminMe, getMe } from '../api/client'
 
 export const useSession = () => {
   const [loading, setLoading] = useState(true)
-  const [sessionRole, setSessionRole] = useState(null)
-  const [sessionUser, setSessionUser] = useState(null)
+  const [sessionRole, setSessionRole] = useState(() => {
+    // ✅ Read localStorage immediately on init before any API call
+    try {
+      const stored = localStorage.getItem('prguard_session')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (parsed?.role === 'user' && parsed?.user_id) return 'user'
+      }
+    } catch {}
+    return null
+  })
+  const [sessionUser, setSessionUser] = useState(() => {
+    // ✅ Read localStorage immediately on init before any API call
+    try {
+      const stored = localStorage.getItem('prguard_session')
+      if (stored) return JSON.parse(stored)
+    } catch {}
+    return null
+  })
 
   useEffect(() => {
     let active = true
@@ -15,7 +32,6 @@ export const useSession = () => {
         if (!active) return
 
         if (userSession?.authenticated && userSession?.role === 'user') {
-          // ✅ Cookie worked — keep localStorage in sync
           localStorage.setItem('prguard_session', JSON.stringify(userSession))
           setSessionRole('user')
           setSessionUser(userSession)
@@ -23,12 +39,13 @@ export const useSession = () => {
         }
 
         if (adminSession?.role === 'admin') {
+          localStorage.removeItem('prguard_session')
           setSessionRole('admin')
           setSessionUser(adminSession)
           return
         }
 
-        // ✅ Cookie failed — try localStorage fallback (cross-domain OAuth)
+        // Cookie failed — keep localStorage session if it exists
         const stored = localStorage.getItem('prguard_session')
         if (stored) {
           try {
@@ -42,13 +59,14 @@ export const useSession = () => {
             localStorage.removeItem('prguard_session')
           }
         }
-      } catch {
-        // ignore
-      }
 
-      if (!active) return
-      setSessionRole(null)
-      setSessionUser(null)
+        // Truly unauthenticated
+        setSessionRole(null)
+        setSessionUser(null)
+
+      } catch {
+        // On error keep whatever state we have from localStorage
+      }
     }
 
     loadSession().finally(() => {
@@ -57,7 +75,6 @@ export const useSession = () => {
 
     const handleExpiry = () => {
       if (!active) return
-      // ✅ Clear localStorage on logout/expiry
       localStorage.removeItem('prguard_session')
       setSessionRole(null)
       setSessionUser(null)
