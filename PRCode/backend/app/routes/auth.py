@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import base64
 import json
 import logging
 from datetime import datetime, timezone
@@ -270,9 +270,11 @@ async def github_callback(
         clear_user_session_cookie(response)
         return response
 
-    payload = json.dumps(_build_session_payload(db_user))
-    callback_target = f"{frontend_url}/auth/callback"
-    response = _build_redirect_page(callback_target, "Signing in, please wait...", payload)
+    # ✅ Encode session payload in URL so it survives cross-domain redirect
+    session_payload = _build_session_payload(db_user)
+    encoded = base64.b64encode(json.dumps(session_payload).encode()).decode()
+    callback_target = f"{frontend_url}/auth/callback?session={encoded}"
+    response = _build_redirect_page(callback_target, "Signing in, please wait...")
 
     is_prod = settings.ENVIRONMENT == "production"
     response.set_cookie(
