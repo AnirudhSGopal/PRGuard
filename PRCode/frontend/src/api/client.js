@@ -43,12 +43,18 @@ export const clearScopedApiKey = () => {}
 
 
 // ── Global 401 handler ────────────────────────────────────────────────────────
-// Fires whenever any request gets a 401 so useAuth can react immediately
+// Only fires auth:expired if a session exists in localStorage.
+// Without this guard, 401s from /api/repos or /api/api-keys on initial page
+// load wipe a valid localStorage session before useSession can fall back to it,
+// causing an immediate redirect to /login right after OAuth login succeeds.
 client.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error?.response?.status === 401) {
-      window.dispatchEvent(new CustomEvent('auth:expired'))
+      const stored = localStorage.getItem('prguard_session')
+      if (stored) {
+        window.dispatchEvent(new CustomEvent('auth:expired'))
+      }
     }
     return Promise.reject(error)
   }
@@ -292,9 +298,10 @@ export const getMe = async () => {
     return null
   }
 }
+
 export const logout = async () => {
   try {
-    localStorage.removeItem('prguard_session') // ✅ add this
+    localStorage.removeItem('prguard_session')
     const res = await client.post('/auth/logout')
     return res.data || { redirect: '/login', role: 'user' }
   } catch {
