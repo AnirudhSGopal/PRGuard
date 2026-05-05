@@ -14,7 +14,9 @@ export const useSession = () => {
         const [userSession, adminSession] = await Promise.all([getMe(), getAdminMe()])
         if (!active) return
 
-        if (userSession?.login) {
+        if (userSession?.authenticated && userSession?.role === 'user') {
+          // ✅ Cookie worked — keep localStorage in sync
+          localStorage.setItem('prguard_session', JSON.stringify(userSession))
           setSessionRole('user')
           setSessionUser(userSession)
           return
@@ -25,8 +27,23 @@ export const useSession = () => {
           setSessionUser(adminSession)
           return
         }
+
+        // ✅ Cookie failed — try localStorage fallback (cross-domain OAuth)
+        const stored = localStorage.getItem('prguard_session')
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored)
+            if (parsed?.role === 'user' && parsed?.user_id) {
+              setSessionRole('user')
+              setSessionUser(parsed)
+              return
+            }
+          } catch {
+            localStorage.removeItem('prguard_session')
+          }
+        }
       } catch {
-        // Ignore and fall through to the unauthenticated state.
+        // ignore
       }
 
       if (!active) return
@@ -40,13 +57,14 @@ export const useSession = () => {
 
     const handleExpiry = () => {
       if (!active) return
+      // ✅ Clear localStorage on logout/expiry
+      localStorage.removeItem('prguard_session')
       setSessionRole(null)
       setSessionUser(null)
       setLoading(false)
     }
 
     window.addEventListener('auth:expired', handleExpiry)
-
     return () => {
       active = false
       window.removeEventListener('auth:expired', handleExpiry)
