@@ -1,5 +1,24 @@
 {
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/api/:path*",
+      "destination": "https://prguard-backend.onrender.com/api/:path*"
+    },
+    {
+      "source": "/auth/:path*",
+      "destination": "https://prguard-backend.onrender.com/auth/:path*"
+    },
+    {
+      "source": "/admin/:path*",
+      "destination": "https://prguard-backend.onrender.com/admin/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://prguard-backend.onrender.com/health"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }
