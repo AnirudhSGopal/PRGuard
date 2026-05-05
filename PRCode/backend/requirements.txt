@@ -18,7 +18,7 @@ SQLAlchemy==2.0.43
 asyncpg==0.30.0
 aiosqlite==0.21.0
 psycopg2-binary==2.9.10
-greenlet==3.0.3
+greenlet==3.1.1
 
 # misc
 python-dotenv==1.1.1
