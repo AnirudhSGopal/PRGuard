@@ -2,7 +2,7 @@ import axios from 'axios'
 
 // In production, set VITE_API_BASE_URL (for example: https://api.yourdomain.com).
 // In development, keep it empty to use the Vite proxy.
-const ENV_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim()
+const ENV_BASE_URL = ''
 const DEV_PROXY_TARGET = (import.meta.env.VITE_API_PROXY_TARGET || '').trim()
 const IS_BROWSER = typeof window !== 'undefined'
 const DERIVED_LOCAL_API_ORIGIN =
