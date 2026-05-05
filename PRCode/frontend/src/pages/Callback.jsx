@@ -29,11 +29,12 @@ export default function Callback() {
     }
 
     const resolveSession = async () => {
-      // ✅ Primary: read session from URL param injected by backend
       if (sessionParam) {
         try {
           const decoded = JSON.parse(atob(sessionParam))
           if (decoded?.role === 'user' && decoded?.user_id) {
+            // ✅ Store session so useSession can read it
+            localStorage.setItem('prguard_session', JSON.stringify(decoded))
             setStatus('Login successful! Redirecting...')
             timerId = setTimeout(() => navigate('/dashboard', { replace: true }), 600)
             return
@@ -44,28 +45,26 @@ export default function Callback() {
             return
           }
         } catch {
-          // fall through to cookie check
+          // fall through
         }
       }
 
-      // Fallback: cookie check (for dev / same-domain)
+      // Fallback: cookie check
       await new Promise(r => setTimeout(r, 800))
       try {
         const session = await getMe()
         if (!active) return
-
         if (session?.authenticated && session?.role === 'user') {
+          localStorage.setItem('prguard_session', JSON.stringify(session))
           setStatus('Login successful! Redirecting...')
           timerId = setTimeout(() => navigate('/dashboard', { replace: true }), 600)
           return
         }
-
         if (session?.authenticated && session?.role === 'admin') {
           setStatus('Admin accounts must use email login. Redirecting...')
           timerId = setTimeout(() => navigate('/admin/login?reason=admin_local_login_required', { replace: true }), 600)
           return
         }
-
         setStatus('Session not found. Redirecting...')
         timerId = setTimeout(() => navigate('/login', { replace: true }), 1200)
       } catch {
@@ -76,7 +75,6 @@ export default function Callback() {
     }
 
     resolveSession()
-
     return () => {
       active = false
       if (timerId) clearTimeout(timerId)
