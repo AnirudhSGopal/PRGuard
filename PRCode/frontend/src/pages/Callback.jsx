@@ -9,6 +9,7 @@ export default function Callback() {
   useEffect(() => {
     let timerId
     let active = true
+
     const params = new URLSearchParams(window.location.search)
     const installationId = params.get('installation_id')
     const error          = params.get('error')
@@ -22,7 +23,6 @@ export default function Callback() {
     }
 
     if (installationId) {
-      // GitHub App installation callback
       localStorage.setItem('prguard_installation_id', installationId)
       setStatus('App installed! Redirecting...')
       timerId = setTimeout(() => navigate('/dashboard'), 1500)
@@ -32,24 +32,26 @@ export default function Callback() {
     }
 
     const resolveSession = async () => {
+      // Wait briefly for the session cookie to be set
+      await new Promise(r => setTimeout(r, 800))
       try {
         const session = await getMe()
         if (!active) return
 
-        if (!session) {
-          setStatus('Session not found. Redirecting...')
-          timerId = setTimeout(() => navigate('/login', { replace: true }), 1200)
+        if (session?.authenticated && session?.role === 'user') {
+          setStatus('Login successful! Redirecting...')
+          timerId = setTimeout(() => navigate('/dashboard', { replace: true }), 600)
           return
         }
 
-        if (session.role !== 'user') {
+        if (session?.authenticated && session?.role === 'admin') {
           setStatus('Admin accounts must use email login. Redirecting...')
           timerId = setTimeout(() => navigate('/admin/login?reason=admin_local_login_required', { replace: true }), 600)
           return
         }
 
-        setStatus('Login successful! Redirecting...')
-        timerId = setTimeout(() => navigate('/dashboard', { replace: true }), 600)
+        setStatus('Session not found. Redirecting...')
+        timerId = setTimeout(() => navigate('/login', { replace: true }), 1200)
       } catch {
         if (!active) return
         setStatus('Could not verify session. Redirecting...')
