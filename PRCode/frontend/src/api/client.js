@@ -292,9 +292,9 @@ export const getMe = async () => {
     return null
   }
 }
-
 export const logout = async () => {
   try {
+    localStorage.removeItem('prguard_session') // ✅ add this
     const res = await client.post('/auth/logout')
     return res.data || { redirect: '/login', role: 'user' }
   } catch {
