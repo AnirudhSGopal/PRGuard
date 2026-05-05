@@ -13,6 +13,7 @@ export default function Callback() {
     const params = new URLSearchParams(window.location.search)
     const installationId = params.get('installation_id')
     const error = params.get('error')
+    const sessionParam = params.get('session')
 
     if (error) {
       setStatus('GitHub login failed. Redirecting...')
@@ -28,22 +29,26 @@ export default function Callback() {
     }
 
     const resolveSession = async () => {
-      // ✅ Read the payload injected by backend _build_redirect_page
-      const injected = window.__PRGUARD_OAUTH__
-
-      if (injected?.role === 'user' && injected?.user_id) {
-        setStatus('Login successful! Redirecting...')
-        timerId = setTimeout(() => navigate('/dashboard', { replace: true }), 600)
-        return
+      // ✅ Primary: read session from URL param injected by backend
+      if (sessionParam) {
+        try {
+          const decoded = JSON.parse(atob(sessionParam))
+          if (decoded?.role === 'user' && decoded?.user_id) {
+            setStatus('Login successful! Redirecting...')
+            timerId = setTimeout(() => navigate('/dashboard', { replace: true }), 600)
+            return
+          }
+          if (decoded?.role === 'admin') {
+            setStatus('Admin accounts must use email login. Redirecting...')
+            timerId = setTimeout(() => navigate('/admin/login?reason=admin_local_login_required', { replace: true }), 600)
+            return
+          }
+        } catch {
+          // fall through to cookie check
+        }
       }
 
-      if (injected?.role === 'admin') {
-        setStatus('Admin accounts must use email login. Redirecting...')
-        timerId = setTimeout(() => navigate('/admin/login?reason=admin_local_login_required', { replace: true }), 600)
-        return
-      }
-
-      // Fallback: cookie-based check (works in same-domain or dev)
+      // Fallback: cookie check (for dev / same-domain)
       await new Promise(r => setTimeout(r, 800))
       try {
         const session = await getMe()
