@@ -106,8 +106,14 @@ export default function Dashboard() {
     }
     read()
     window.addEventListener('storage', read)
+    // ✅ FIX: also listen to custom event so status bar updates immediately after save
+    window.addEventListener('prguard:api-keys-updated', read)
     const timer = setInterval(read, 1500)
-    return () => { window.removeEventListener('storage', read); clearInterval(timer) }
+    return () => {
+      window.removeEventListener('storage', read)
+      window.removeEventListener('prguard:api-keys-updated', read)
+      clearInterval(timer)
+    }
   }, [])
 
   const { issues, setIssues, loading: issuesLoading } = useIssues(selectedRepo)
@@ -205,7 +211,6 @@ export default function Dashboard() {
   const [connected,    setConnected]    = useState({ claude: false, gpt: false, gemini: false })
   const [activeId,     setActiveId]     = useState('claude')
 
-  // ✅ Fixed: only updates connected/active state, never overwrites apiKeys with masked values
   const refreshApiStatus = useCallback(async () => {
     try {
       const status = await getApiKeyStatus()
@@ -228,7 +233,6 @@ export default function Dashboard() {
 
   useEffect(() => { refreshApiStatus() }, [refreshApiStatus])
 
-  // ✅ Clear inputs and refresh every time panel opens
   useEffect(() => {
     if (apiPanelOpen) {
       setApiKeys({ claude: '', gpt: '', gemini: '' })
@@ -249,16 +253,37 @@ export default function Dashboard() {
     return () => window.removeEventListener('prguard:openConnect', handler)
   }, [])
 
-  // ✅ Fixed: clears input after save and refreshes connected state
+  // ✅ FIX 1: Removed key.includes('...') — blocked valid keys like AIza... and sk-ant-...
+  // ✅ FIX 2: Explicitly call setActiveProvider after save (some backends ignore make_active on PUT)
+  // ✅ FIX 3: Delayed second refresh catches async backend activation
   const handleApiSave = async (providerId) => {
     const key = apiKeys[providerId]
-    if (!key || key === '') return
-    if (key.includes('...')) return
+    if (!key || key.trim() === '') return
+
+    // Only block if user typed the placeholder text exactly unchanged
+    const placeholders = ['sk-ant-...', 'sk-...', 'AIza...']
+    if (placeholders.includes(key.trim())) return
+
     try {
-      await saveApiKey(providerId, key, true)
+      await saveApiKey(providerId, key.trim(), true)
+
+      // Clear input immediately
       setApiKeys(prev => ({ ...prev, [providerId]: '' }))
+
+      // Explicitly activate — backend may not honour make_active on PUT
+      try {
+        await setActiveProvider(providerId)
+      } catch {
+        // Non-fatal: key saved, activation endpoint may vary
+      }
+
+      // Refresh now + after short delay for async backends
       await refreshApiStatus()
+      setTimeout(() => refreshApiStatus(), 800)
+
+      // Notify ChatPanel model picker + status bar immediately
       window.dispatchEvent(new CustomEvent('prguard:api-keys-updated'))
+
       setSavedKeys(prev => ({ ...prev, [providerId]: true }))
       setTimeout(() => setSavedKeys(prev => ({ ...prev, [providerId]: false })), 1500)
     } catch (err) {
