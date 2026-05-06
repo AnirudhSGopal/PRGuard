@@ -15,21 +15,12 @@ from app.services.auth_session import ADMIN_SESSION_COOKIE_NAME, USER_SESSION_CO
 
 logger = logging.getLogger("prguard")
 
+
 class GlobalHardenMiddleware(BaseHTTPMiddleware):
-    """
-    Principal Engineer's Hardening Middleware:
-    1. Global request logging (method, path, duration)
-    2. Centralized error handling (no more silent 500s)
-    3. Resilience against unhandled exceptions
-    """
     async def dispatch(self, request: Request, call_next) -> Response:
         start_time = time.time()
-        
         try:
-            # 1. Process request
             response = await call_next(request)
-            
-            # 2. Log success
             process_time = time.time() - start_time
             logger.info(
                 f"{request.method} {request.url.path} "
@@ -37,32 +28,21 @@ class GlobalHardenMiddleware(BaseHTTPMiddleware):
                 f"time={process_time:.3f}s"
             )
             return response
-
         except Exception as e:
-            # 3. Handle failure
             process_time = time.time() - start_time
             error_id = str(uuid.uuid4())
             logger.exception(
                 f"CRITICAL ERROR [{error_id}] {request.method} {request.url.path} "
                 f"time={process_time:.3f}s"
             )
-            
             return JSONResponse(
                 status_code=500,
-                content={
-                    "detail": "An internal server error occurred.",
-                    "error_id": error_id,
-                }
+                content={"detail": "An internal server error occurred.", "error_id": error_id}
             )
 
 
 class AdminRoleMiddleware(BaseHTTPMiddleware):
-    """Enforce backend admin authorization for all protected /admin routes."""
-
-    _open_admin_paths = {
-        "/admin/login",
-        "/admin/me",
-    }
+    _open_admin_paths = {"/admin/login", "/admin/me"}
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
@@ -101,11 +81,25 @@ class AdminRoleMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+def _extract_session_token(request: Request, cookie_token: str | None) -> str:
+    """
+    Extract session token from cookie first, then fall back to X-Session-Token header.
+    This handles the case where the cookie is blocked by cross-domain restrictions
+    (e.g. Vercel frontend + Render backend) but the token was stored in localStorage
+    and sent as a header by the frontend.
+    """
+    raw = (cookie_token or "").strip()
+    if not raw:
+        raw = (request.headers.get("X-Session-Token") or "").strip()
+    return raw
+
+
 async def requireAuth(
+    request: Request,
     session_token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE_NAME),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    raw_token = (session_token or "").strip()
+    raw_token = _extract_session_token(request, session_token)
     if not raw_token:
         raise HTTPException(status_code=401, detail="Authentication required")
 
@@ -121,10 +115,11 @@ async def requireAuth(
 
 
 async def get_current_user(
+    request: Request,
     user_token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE_NAME),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    raw_token = (user_token or "").strip()
+    raw_token = _extract_session_token(request, user_token)
     if not raw_token:
         raise HTTPException(status_code=401, detail="User authentication required")
 
