@@ -24,8 +24,8 @@ from app.services.auth_session import (
     USER_SESSION_COOKIE_NAME,
     clear_user_session_cookie,
     get_user_from_user_session,
-    issue_user_session,
 )
+from app.services.admin_auth import create_session_token, hash_session_token
 
 router = APIRouter()
 logger = logging.getLogger("prguard")
@@ -47,8 +47,7 @@ def _normalize_frontend_origin(value: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _build_redirect_page(target_url: str, status_text: str, oauth_payload: str | None = None) -> HTMLResponse:
-    oauth_line = f"window.__PRGUARD_OAUTH__ = {oauth_payload};" if oauth_payload else ""
+def _build_redirect_page(target_url: str, status_text: str) -> HTMLResponse:
     return HTMLResponse(
         status_code=200,
         content=f"""<!DOCTYPE html>
@@ -61,7 +60,6 @@ def _build_redirect_page(target_url: str, status_text: str, oauth_payload: str |
     <body style=\"font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0d0f12\">
         <p style=\"color:#aaa;font-size:14px\">{status_text}</p>
         <script>
-            {oauth_line}
             window.location.replace({json.dumps(target_url)});
         </script>
     </body>
@@ -69,14 +67,22 @@ def _build_redirect_page(target_url: str, status_text: str, oauth_payload: str |
     )
 
 
-def _build_session_payload(user: User) -> dict:
-    role = _normalize_role(user.role)
+def _build_session_payload(user: User, session_token: str) -> dict:
+    """Build session payload including the actual token for header-based auth fallback."""
     return {
+        "authenticated": True,
         "user_id": user.id,
         "userId": user.id,
+        "id": user.id,
         "email": user.email,
-        "role": role,
-        "token": "cookie",
+        "role": _normalize_role(user.role),
+        "token": session_token,
+        "login": user.username,
+        "name": user.username,
+        "avatar_url": user.avatar_url,
+        "html_url": "",
+        "is_admin": False,
+        "auth_provider": "github",
     }
 
 
@@ -101,7 +107,6 @@ async def github_login(
         if referer:
             parsed = urlparse(referer)
             origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
-
     if not origin:
         origin = _normalize_frontend_origin((settings.FRONTEND_URL or "").strip())
 
@@ -240,7 +245,7 @@ async def github_callback(
     configured_frontend = _normalize_frontend_origin((settings.FRONTEND_URL or "").strip())
     frontend_url = state_frontend or configured_frontend
     if not frontend_url:
-        raise HTTPException(status_code=500, detail="FRONTEND_URL is not configured and no valid frontend_origin was provided")
+        raise HTTPException(status_code=500, detail="FRONTEND_URL is not configured")
 
     prior_session_user = await get_user_from_user_session(db, user_token)
 
@@ -252,13 +257,7 @@ async def github_callback(
             response = _build_redirect_page(admin_login_target, "Admin account detected. Redirecting to admin login...")
             is_prod = settings.ENVIRONMENT == "production"
             clear_user_session_cookie(response)
-            response.delete_cookie(
-                key="gh_token",
-                path="/",
-                httponly=True,
-                samesite="none" if is_prod else "lax",
-                secure=is_prod,
-            )
+            response.delete_cookie(key="gh_token", path="/", httponly=True, samesite="none" if is_prod else "lax", secure=is_prod)
             return response
         raise
 
@@ -270,13 +269,31 @@ async def github_callback(
         clear_user_session_cookie(response)
         return response
 
-    # ✅ Encode session payload in URL so it survives cross-domain redirect
-    session_payload = _build_session_payload(db_user)
+    if prior_session_user and prior_session_user.id != db_user.id:
+        logger.info("session_rotated previous_user_id=%s new_user_id=%s", prior_session_user.id, db_user.id)
+        prior_session_user.session_token_hash = None
+
+    # Generate ONE session token, store hash in DB, embed token in URL and cookie
+    session_token = create_session_token()
+    db_user.session_token_hash = hash_session_token(session_token)
+    db_user.last_login_at = datetime.now(timezone.utc)
+
+    session_payload = _build_session_payload(db_user, session_token)
     encoded = base64.b64encode(json.dumps(session_payload).encode()).decode()
     callback_target = f"{frontend_url}/auth/callback?session={encoded}"
     response = _build_redirect_page(callback_target, "Signing in, please wait...")
 
     is_prod = settings.ENVIRONMENT == "production"
+    # Set cookie — works if browser accepts cross-domain cookies
+    response.set_cookie(
+        key=USER_SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        secure=is_prod,
+        samesite="none" if is_prod else "lax",
+        max_age=settings.ADMIN_SESSION_TTL_SECONDS,
+        path="/",
+    )
     response.set_cookie(
         key="gh_token",
         value=access_token,
@@ -286,19 +303,8 @@ async def github_callback(
         max_age=60 * 60 * 24,
         path="/",
     )
-    response.delete_cookie(
-        key="admin_session",
-        path="/",
-        httponly=True,
-        samesite="none" if is_prod else "lax",
-        secure=is_prod,
-    )
+    response.delete_cookie(key="admin_session", path="/", httponly=True, samesite="none" if is_prod else "lax", secure=is_prod)
 
-    if prior_session_user and prior_session_user.id != db_user.id:
-        logger.info("session_rotated previous_user_id=%s new_user_id=%s", prior_session_user.id, db_user.id)
-        prior_session_user.session_token_hash = None
-
-    issue_user_session(db_user, response)
     await db.commit()
     logger.info("oauth_callback_succeeded user_id=%s role=user", db_user.id)
     return response
@@ -325,10 +331,7 @@ async def get_current_user(
             "auth_provider": None,
         }
 
-    record_user_activity(
-        user_id=str(db_user.id),
-        username=db_user.username,
-    )
+    record_user_activity(user_id=str(db_user.id), username=db_user.username)
 
     return {
         "authenticated": True,
@@ -370,22 +373,12 @@ async def logout(
 
     clear_user_session_cookie(response)
     is_prod = settings.ENVIRONMENT == "production"
-    response.delete_cookie(
-        key="gh_token",
-        path="/",
-        httponly=True,
-        samesite="none" if is_prod else "lax",
-        secure=is_prod,
-    )
-    redirect_target = "/login"
-    return {"status": "logged out", "redirect": redirect_target, "role": session_role}
+    response.delete_cookie(key="gh_token", path="/", httponly=True, samesite="none" if is_prod else "lax", secure=is_prod)
+    return {"status": "logged out", "redirect": "/login", "role": session_role}
 
 
 @router.get("/callback")
-async def github_app_callback(
-    code: str = "",
-    installation_id: str = "",
-):
+async def github_app_callback(code: str = "", installation_id: str = ""):
     return {
         "status": "ok",
         "installation_id": installation_id,
