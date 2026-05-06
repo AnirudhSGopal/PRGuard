@@ -23,7 +23,6 @@ const PROVIDER_LIST = [
 ]
 const PROVIDER_NAMES = { claude: 'Claude Sonnet', gpt: 'GPT-4o', gemini: 'Gemini 1.5 Pro' }
 
-// ── Resize handle ─────────────────────────────────────────────────────────────
 function ResizeHandle({ onMouseDown, dark }) {
   const [hovered, setHovered] = useState(false)
   return (
@@ -44,7 +43,6 @@ function ResizeHandle({ onMouseDown, dark }) {
       }}
       title="Drag to resize"
     >
-      {/* Wider invisible hit area */}
       <div style={{ position: 'absolute', inset: '0 -3px', cursor: 'col-resize' }} />
     </div>
   )
@@ -69,7 +67,6 @@ export default function Dashboard() {
   const t = getTheme(theme)
   const dark = theme === 'dark'
 
-  // ── Panel widths (resizable) ──────────────────────────────────────────────
   const [repoWidth,  setRepoWidth]  = useState(208)
   const [issueWidth, setIssueWidth] = useState(224)
   const MIN_W = 120
@@ -102,7 +99,6 @@ export default function Dashboard() {
     document.addEventListener('mouseup', onUp)
   }, [repoWidth, issueWidth])
 
-  // ── App state ─────────────────────────────────────────────────────────────
   const [selectedRepo,  setSelectedRepo]  = useState(null)
   const [pendingRepo,   setPendingRepo]   = useState(null)
   const [selectedIssue, setSelectedIssue] = useState(null)
@@ -111,6 +107,7 @@ export default function Dashboard() {
   const [autoSend,      setAutoSend]      = useState(false)
   const [providerLabel, setProviderLabel] = useState('No provider')
   const [apiPanelError, setApiPanelError] = useState('')
+
   useEffect(() => {
     const read = () => {
       const id = getScopedProvider()
@@ -156,30 +153,20 @@ export default function Dashboard() {
     setAutoSend(false)
   }, [])
 
-  const [pinnedRepos,    setPinnedRepos]    = useState(() => {
+  const [pinnedRepos, setPinnedRepos] = useState(() => {
     const saved = localStorage.getItem('prguard_pinned')
     if (!saved) return []
-    try {
-      return JSON.parse(saved)
-    } catch {
-      localStorage.removeItem('prguard_pinned')
-      return []
-    }
+    try { return JSON.parse(saved) } catch { localStorage.removeItem('prguard_pinned'); return [] }
   })
 
   useEffect(() => {
     localStorage.setItem('prguard_pinned', JSON.stringify(pinnedRepos))
   }, [pinnedRepos])
 
-  const [hiddenRepos,    setHiddenRepos]    = useState(() => {
+  const [hiddenRepos, setHiddenRepos] = useState(() => {
     const saved = localStorage.getItem('prguard_hidden')
     if (!saved) return []
-    try {
-      return JSON.parse(saved)
-    } catch {
-      localStorage.removeItem('prguard_hidden')
-      return []
-    }
+    try { return JSON.parse(saved) } catch { localStorage.removeItem('prguard_hidden'); return [] }
   })
 
   useEffect(() => {
@@ -189,12 +176,8 @@ export default function Dashboard() {
   const { repos: fetchedRepos, loading: reposLoading, refresh: refreshRepos } = useRepos()
 
   const handleRepoConnect = useCallback(async (newRepo) => {
-    // Refresh the repository list from the backend
     await refreshRepos()
-    
-    // Also unhide if manually re-connecting
     setHiddenRepos(prev => prev.filter(name => name !== newRepo.name))
-    
     setSelectedRepo(newRepo.name)
     setSelectedIssue(null)
     setChatInput('')
@@ -205,21 +188,12 @@ export default function Dashboard() {
     try {
       const { disconnectRepo } = await import('../api/client')
       const repoToDisconnect = fetchedRepos.find(r => r.name === repoName)
-      if (!repoToDisconnect) {
-        alert('Repository not found in connected list')
-        return
-      }
-
+      if (!repoToDisconnect) { alert('Repository not found in connected list'); return }
       await disconnectRepo(repoToDisconnect.id)
-      
       await refreshRepos()
       setPinnedRepos(prev => prev.filter(name => name !== repoName))
       setHiddenRepos(prev => prev.filter(name => name !== repoName))
-      
-      if (selectedRepo === repoName) {
-        setSelectedRepo(null)
-        setSelectedIssue(null)
-      }
+      if (selectedRepo === repoName) { setSelectedRepo(null); setSelectedIssue(null) }
     } catch (err) {
       alert('Failed to disconnect repository')
     }
@@ -232,8 +206,7 @@ export default function Dashboard() {
     })
   }, [])
 
-  const allRepos = fetchedRepos // ✅ ONLY USE AUTHED REPOS FROM BACKEND
-
+  const allRepos = fetchedRepos
   const sortedRepos = [...allRepos].sort((a, b) => {
     const aPinned = pinnedRepos.includes(a.name)
     const bPinned = pinnedRepos.includes(b.name)
@@ -263,7 +236,7 @@ export default function Dashboard() {
       })
       const active = status.active_provider || 'claude'
       setConnected(nextConnected)
-      setApiKeys(masked)
+      // ✅ Don't overwrite apiKeys with masked values — only update connected/active state
       setActiveId(active)
       setScopedProvider(active)
       setProviderLabel(PROVIDER_NAMES[active] ?? active)
@@ -276,6 +249,14 @@ export default function Dashboard() {
   useEffect(() => {
     refreshApiStatus()
   }, [refreshApiStatus])
+
+  // ✅ Clear input fields and refresh status every time panel opens
+  useEffect(() => {
+    if (apiPanelOpen) {
+      setApiKeys({ claude: '', gpt: '', gemini: '' })
+      refreshApiStatus()
+    }
+  }, [apiPanelOpen, refreshApiStatus])
 
   useEffect(() => {
     const handler = () => setApiPanelOpen(true)
@@ -290,9 +271,11 @@ export default function Dashboard() {
     return () => window.removeEventListener('prguard:openConnect', handler)
   }, [])
 
+  // ✅ Fixed: only block if key is empty or contains '...' (masked value)
   const handleApiSave = async (providerId) => {
     const key = apiKeys[providerId]
-    if (!key || key.includes('...')) return
+    if (!key || key === '') return
+    if (key.includes('...')) return
     try {
       await saveApiKey(providerId, key, true)
       await refreshApiStatus()
@@ -317,9 +300,7 @@ export default function Dashboard() {
 
   const handleDeleteApiKey = async (providerId) => {
     const confirmed = window.confirm(`Remove ${PROVIDER_NAMES[providerId] ?? providerId} API key?`)
-    if (!confirmed) {
-      return
-    }
+    if (!confirmed) return
     try {
       await deleteApiKey(providerId)
       await refreshApiStatus()
@@ -342,15 +323,9 @@ export default function Dashboard() {
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: t.bg, color: t.text }}>
       <Navbar />
 
-      {/* ── Main layout ── */}
       <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
 
-        {/* ── Repos panel ── */}
-        <div style={{
-          width: repoWidth, minWidth: repoWidth, maxWidth: repoWidth,
-          flexShrink: 0, display: 'flex', flexDirection: 'column',
-          overflow: 'hidden', background: t.bg2,
-        }}>
+        <div style={{ width: repoWidth, minWidth: repoWidth, maxWidth: repoWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: t.bg2 }}>
           <div style={{ padding: '8px 12px', flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
             <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: t.text3, margin: 0 }}>Repositories</p>
           </div>
@@ -368,31 +343,17 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ── Resize handle 1 (between repos and issues) ── */}
         <ResizeHandle dark={dark} onMouseDown={(e) => startResize('repo', e)} />
 
-        {/* ── Issues / Files panel ── */}
-        <div style={{
-          width: issueWidth, minWidth: issueWidth, maxWidth: issueWidth,
-          flexShrink: 0, display: 'flex', flexDirection: 'column',
-          overflow: 'hidden', background: t.bg2,
-        }}>
-          {/* Tab bar */}
+        <div style={{ width: issueWidth, minWidth: issueWidth, maxWidth: issueWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: t.bg2 }}>
           <div style={{ display: 'flex', flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
             {['issues', 'files'].map(tab => (
               <button key={tab} onClick={() => setLeftTab(tab)}
-                style={{
-                  flex: 1, padding: '8px 0',
-                  fontSize: 10, textTransform: 'capitalize', letterSpacing: '0.06em',
-                  border: 'none', borderBottom: `2px solid ${leftTab === tab ? t.accent : 'transparent'}`,
-                  color: leftTab === tab ? t.accentText : t.text3,
-                  background: 'transparent', cursor: 'pointer', transition: 'all 0.15s',
-                }}>
+                style={{ flex: 1, padding: '8px 0', fontSize: 10, textTransform: 'capitalize', letterSpacing: '0.06em', border: 'none', borderBottom: `2px solid ${leftTab === tab ? t.accent : 'transparent'}`, color: leftTab === tab ? t.accentText : t.text3, background: 'transparent', cursor: 'pointer', transition: 'all 0.15s' }}>
                 {tab}
               </button>
             ))}
           </div>
-          {/* Scroll container */}
           <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
             {leftTab === 'issues'
               ? <IssueList issues={issues} setIssues={setIssues} selectedRepo={selectedRepo} selectedIssue={selectedIssue} onSelectIssue={handleIssueSelect} loading={issuesLoading} />
@@ -401,10 +362,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ── Resize handle 2 (between issues and chat) ── */}
         <ResizeHandle dark={dark} onMouseDown={(e) => startResize('issue', e)} />
 
-        {/* ── Chat panel ── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
           <ChatPanel
             selectedRepo={selectedRepo}
@@ -419,13 +378,7 @@ export default function Dashboard() {
       </div>
 
       {/* ── Status bar ── */}
-      <div style={{
-        height: 26, flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: 16, padding: '0 16px',
-        background: dark ? '#0d1117' : '#f0f0f0',
-        borderTop: `1px solid ${dark ? '#1e2530' : '#d0d0d0'}`,
-        fontSize: 10, position: 'relative', zIndex: 50,
-      }}>
+      <div style={{ height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 16, padding: '0 16px', background: dark ? '#0d1117' : '#f0f0f0', borderTop: `1px solid ${dark ? '#1e2530' : '#d0d0d0'}`, fontSize: 10, position: 'relative', zIndex: 50 }}>
         <span style={{ fontWeight: 600, letterSpacing: '0.05em', color: t.accentText, fontFamily: 'monospace' }}>PRGuard</span>
         <span style={{ color: dark ? '#1e2530' : '#ccc' }}>·</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#22c55e' }}>
@@ -492,7 +445,7 @@ export default function Dashboard() {
                           value={apiKeys[provider.id]}
                           onChange={e => setApiKeys(prev => ({ ...prev, [provider.id]: e.target.value }))}
                           onKeyDown={e => { if (e.key === 'Enter') handleApiSave(provider.id) }}
-                          placeholder={provider.placeholder}
+                          placeholder={connected[provider.id] ? '••••••••••••' : provider.placeholder}
                           style={{ flex: 1, minWidth: 0, padding: '4px 7px', fontSize: 10, fontFamily: 'monospace', background: 'transparent', border: 'none', color: t.text, outline: 'none' }}
                         />
                         <button type="button" onClick={() => setShowKeys(prev => ({ ...prev, [provider.id]: !prev[provider.id] }))}
@@ -534,7 +487,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Repo switch confirmation ── */}
       {pendingRepo && (
         <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(3px)' }}>
           <div style={{ width: 380, background: dark ? '#0f1318' : '#fff', border: `1px solid ${dark ? '#1e2a3a' : '#e2e2e2'}`, borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.6)' }}>
@@ -586,11 +538,11 @@ export default function Dashboard() {
       )}
 
       {connectModalOpen && (
-        <ConnectRepoModal 
-          t={t} 
-          dark={dark} 
-          onClose={() => setConnectModalOpen(false)} 
-          onConnect={handleRepoConnect} 
+        <ConnectRepoModal
+          t={t}
+          dark={dark}
+          onClose={() => setConnectModalOpen(false)}
+          onConnect={handleRepoConnect}
         />
       )}
     </div>
