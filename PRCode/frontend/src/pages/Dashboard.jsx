@@ -31,15 +31,10 @@ function ResizeHandle({ onMouseDown, dark }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        width: 4,
-        flexShrink: 0,
-        cursor: 'col-resize',
+        width: 4, flexShrink: 0, cursor: 'col-resize',
         background: hovered ? '#d97706' : 'transparent',
         borderRight: `1px solid ${dark ? '#1e2a3a' : '#e0e0e0'}`,
-        transition: 'background 0.15s',
-        position: 'relative',
-        zIndex: 10,
-        userSelect: 'none',
+        transition: 'background 0.15s', position: 'relative', zIndex: 10, userSelect: 'none',
       }}
       title="Drag to resize"
     >
@@ -75,17 +70,13 @@ export default function Dashboard() {
 
   const startResize = useCallback((which, e) => {
     e.preventDefault()
-    const startX    = e.clientX
-    const startRepo = repoWidth
+    const startX     = e.clientX
+    const startRepo  = repoWidth
     const startIssue = issueWidth
-
     const onMove = (ev) => {
       const dx = ev.clientX - startX
-      if (which === 'repo') {
-        setRepoWidth(Math.min(MAX_W, Math.max(MIN_W, startRepo + dx)))
-      } else {
-        setIssueWidth(Math.min(MAX_W, Math.max(MIN_W, startIssue + dx)))
-      }
+      if (which === 'repo') setRepoWidth(Math.min(MAX_W, Math.max(MIN_W, startRepo + dx)))
+      else setIssueWidth(Math.min(MAX_W, Math.max(MIN_W, startIssue + dx)))
     }
     const onUp = () => {
       document.removeEventListener('mousemove', onMove)
@@ -158,20 +149,14 @@ export default function Dashboard() {
     if (!saved) return []
     try { return JSON.parse(saved) } catch { localStorage.removeItem('prguard_pinned'); return [] }
   })
-
-  useEffect(() => {
-    localStorage.setItem('prguard_pinned', JSON.stringify(pinnedRepos))
-  }, [pinnedRepos])
+  useEffect(() => { localStorage.setItem('prguard_pinned', JSON.stringify(pinnedRepos)) }, [pinnedRepos])
 
   const [hiddenRepos, setHiddenRepos] = useState(() => {
     const saved = localStorage.getItem('prguard_hidden')
     if (!saved) return []
     try { return JSON.parse(saved) } catch { localStorage.removeItem('prguard_hidden'); return [] }
   })
-
-  useEffect(() => {
-    localStorage.setItem('prguard_hidden', JSON.stringify(hiddenRepos))
-  }, [hiddenRepos])
+  useEffect(() => { localStorage.setItem('prguard_hidden', JSON.stringify(hiddenRepos)) }, [hiddenRepos])
 
   const { repos: fetchedRepos, loading: reposLoading, refresh: refreshRepos } = useRepos()
 
@@ -194,19 +179,16 @@ export default function Dashboard() {
       setPinnedRepos(prev => prev.filter(name => name !== repoName))
       setHiddenRepos(prev => prev.filter(name => name !== repoName))
       if (selectedRepo === repoName) { setSelectedRepo(null); setSelectedIssue(null) }
-    } catch (err) {
-      alert('Failed to disconnect repository')
-    }
+    } catch { alert('Failed to disconnect repository') }
   }, [fetchedRepos, selectedRepo, refreshRepos])
 
   const handleTogglePin = useCallback((repoName) => {
-    setPinnedRepos(prev => {
-      if (prev.includes(repoName)) return prev.filter(n => n !== repoName)
-      return [...prev, repoName]
-    })
+    setPinnedRepos(prev =>
+      prev.includes(repoName) ? prev.filter(n => n !== repoName) : [...prev, repoName]
+    )
   }, [])
 
-  const allRepos = fetchedRepos
+  const allRepos    = fetchedRepos
   const sortedRepos = [...allRepos].sort((a, b) => {
     const aPinned = pinnedRepos.includes(a.name)
     const bPinned = pinnedRepos.includes(b.name)
@@ -223,20 +205,18 @@ export default function Dashboard() {
   const [connected,    setConnected]    = useState({ claude: false, gpt: false, gemini: false })
   const [activeId,     setActiveId]     = useState('claude')
 
+  // ✅ Fixed: only updates connected/active state, never overwrites apiKeys with masked values
   const refreshApiStatus = useCallback(async () => {
     try {
       const status = await getApiKeyStatus()
       const nextConnected = { claude: false, gpt: false, gemini: false }
-      const masked = { claude: '', gpt: '', gemini: '' }
       ;(status.items || []).forEach((item) => {
         if (item?.provider && Object.prototype.hasOwnProperty.call(nextConnected, item.provider)) {
           nextConnected[item.provider] = Boolean(item.has_key)
-          masked[item.provider] = item.masked_key || ''
         }
       })
       const active = status.active_provider || 'claude'
       setConnected(nextConnected)
-      // ✅ Don't overwrite apiKeys with masked values — only update connected/active state
       setActiveId(active)
       setScopedProvider(active)
       setProviderLabel(PROVIDER_NAMES[active] ?? active)
@@ -246,11 +226,9 @@ export default function Dashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    refreshApiStatus()
-  }, [refreshApiStatus])
+  useEffect(() => { refreshApiStatus() }, [refreshApiStatus])
 
-  // ✅ Clear input fields and refresh status every time panel opens
+  // ✅ Clear inputs and refresh every time panel opens
   useEffect(() => {
     if (apiPanelOpen) {
       setApiKeys({ claude: '', gpt: '', gemini: '' })
@@ -271,13 +249,14 @@ export default function Dashboard() {
     return () => window.removeEventListener('prguard:openConnect', handler)
   }, [])
 
-  // ✅ Fixed: only block if key is empty or contains '...' (masked value)
+  // ✅ Fixed: clears input after save and refreshes connected state
   const handleApiSave = async (providerId) => {
     const key = apiKeys[providerId]
     if (!key || key === '') return
     if (key.includes('...')) return
     try {
       await saveApiKey(providerId, key, true)
+      setApiKeys(prev => ({ ...prev, [providerId]: '' }))
       await refreshApiStatus()
       window.dispatchEvent(new CustomEvent('prguard:api-keys-updated'))
       setSavedKeys(prev => ({ ...prev, [providerId]: true }))
