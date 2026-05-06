@@ -110,7 +110,11 @@ async def startup():
 
             sys.exit(1)
         print("[WARN] System running in degraded mode.")
-
+        
+@app.get("/debug/secret")
+async def debug_secret():
+    secret = (settings.SECRET_KEY or "")
+    return {"prefix": secret[:8], "length": len(secret)}
 
 @app.get("/health")
 async def health(response: Response):
