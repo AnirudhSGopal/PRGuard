@@ -14,21 +14,22 @@ def _build_engine():
     database_url = settings.database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL must be set before the backend starts.")
+
     engine_kwargs: dict[str, object] = {
         "echo": settings.is_development(),
         "pool_pre_ping": True,
     }
+
     if database_url.startswith("sqlite"):
         engine_kwargs["connect_args"] = {"check_same_thread": False}
         engine_kwargs["poolclass"] = NullPool
     else:
-        # Always disable prepared statement cache.
         # pgbouncer in transaction/statement pool mode doesn't support prepared
-        # statements regardless of provider (Neon, Supabase, Render, etc).
+        # statements. statement_cache_size=0 MUST be in connect_args (asyncpg level).
         connect_args: dict[str, object] = {
             "timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
             "command_timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
-            "statement_cache_size": 0,
+            "statement_cache_size": 0,   # ← asyncpg driver level, disables prepared stmt cache
         }
         engine_kwargs.update(
             {
@@ -38,8 +39,10 @@ def _build_engine():
                 "pool_recycle": max(int(settings.DB_POOL_RECYCLE), 0),
                 "pool_use_lifo": True,
                 "connect_args": connect_args,
+                # NOTE: "prepared_statement_cache_size" removed — not a valid SQLAlchemy kwarg
             }
         )
+
     return create_async_engine(database_url, **engine_kwargs)
 
 engine = _build_engine()
