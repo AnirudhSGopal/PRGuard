@@ -32,7 +32,6 @@ def _build_engine():
             "timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
             "command_timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
             "statement_cache_size": 0,
-            "prepared_statement_cache_size": 0,
         }
 
         engine_kwargs.update(
@@ -43,6 +42,8 @@ def _build_engine():
                 "pool_recycle": max(int(settings.DB_POOL_RECYCLE), 0),
                 "pool_use_lifo": True,
                 "connect_args": connect_args,
+                # Disable SQLAlchemy's prepared statement cache for asyncpg.
+                "prepared_statement_cache_size": 0,
             }
         )
 
