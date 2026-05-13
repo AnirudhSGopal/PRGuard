@@ -42,8 +42,6 @@ def _build_engine():
                 "pool_recycle": max(int(settings.DB_POOL_RECYCLE), 0),
                 "pool_use_lifo": True,
                 "connect_args": connect_args,
-                # Disable SQLAlchemy's prepared statement cache for asyncpg.
-                "prepared_statement_cache_size": 0,
             }
         )
 
