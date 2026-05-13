@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
-from sqlalchemy import text
+from sqlalchemy import text, event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -24,26 +24,33 @@ def _build_engine():
         engine_kwargs["connect_args"] = {"check_same_thread": False}
         engine_kwargs["poolclass"] = NullPool
     else:
-        # pgbouncer in transaction/statement pool mode doesn't support prepared
-        # statements. statement_cache_size=0 MUST be in connect_args (asyncpg level).
+        # Supabase uses pgbouncer in transaction mode which does NOT support
+        # prepared statements. We must disable them completely at every layer.
         connect_args: dict[str, object] = {
             "timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
             "command_timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
-            "statement_cache_size": 0,   # ← asyncpg driver level, disables prepared stmt cache
+            "statement_cache_size": 0,       # asyncpg driver level
+            "prepared_statement_cache_size": 0,  # asyncpg driver level (older versions)
         }
         engine_kwargs.update(
             {
-                "pool_size": max(int(settings.DB_POOL_SIZE), 1),
-                "max_overflow": max(int(settings.DB_MAX_OVERFLOW), 0),
-                "pool_timeout": max(int(settings.DB_POOL_TIMEOUT), 1),
-                "pool_recycle": max(int(settings.DB_POOL_RECYCLE), 0),
-                "pool_use_lifo": True,
+                # Use NullPool so pgbouncer manages connections, not SQLAlchemy.
+                # This prevents stale prepared statements leaking across connections.
+                "poolclass": NullPool,
                 "connect_args": connect_args,
-                # NOTE: "prepared_statement_cache_size" removed — not a valid SQLAlchemy kwarg
             }
         )
 
-    return create_async_engine(database_url, **engine_kwargs)
+    engine = create_async_engine(database_url, **engine_kwargs)
+
+    # Extra safety: intercept every new asyncpg connection and
+    # forcibly disable prepared statement caching at the asyncpg level.
+    @event.listens_for(engine.sync_engine, "connect")
+    def on_connect(dbapi_connection, connection_record):
+        # asyncpg wrapped connection — reset statement cache size
+        dbapi_connection._connection._statement_cache.clear()
+
+    return engine
 
 engine = _build_engine()
 
@@ -61,6 +68,7 @@ async def get_db():
         yield session
 
 async def ping_database() -> None:
+    # Use text() with execution_options to skip prepare
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
 
