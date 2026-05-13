@@ -10,6 +10,7 @@ from app.services.db_migrations import apply_pending_migrations
 
 logger = logging.getLogger("prguard")
 
+
 def _build_engine():
     database_url = settings.database_url()
     if not database_url:
@@ -24,18 +25,14 @@ def _build_engine():
         engine_kwargs["connect_args"] = {"check_same_thread": False}
         engine_kwargs["poolclass"] = NullPool
     else:
-        # Supabase uses pgbouncer in transaction mode which does NOT support
-        # prepared statements. We must disable them completely at every layer.
         connect_args: dict[str, object] = {
             "timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
             "command_timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
-            "statement_cache_size": 0,       # asyncpg driver level
-            "prepared_statement_cache_size": 0,  # asyncpg driver level (older versions)
+            "statement_cache_size": 0,
+            "prepared_statement_cache_size": 0,
         }
         engine_kwargs.update(
             {
-                # Use NullPool so pgbouncer manages connections, not SQLAlchemy.
-                # This prevents stale prepared statements leaking across connections.
                 "poolclass": NullPool,
                 "connect_args": connect_args,
             }
@@ -43,14 +40,14 @@ def _build_engine():
 
     engine = create_async_engine(database_url, **engine_kwargs)
 
-    # Extra safety: intercept every new asyncpg connection and
-    # forcibly disable prepared statement caching at the asyncpg level.
-    @event.listens_for(engine.sync_engine, "connect")
-    def on_connect(dbapi_connection, connection_record):
-        # asyncpg wrapped connection — reset statement cache size
-        dbapi_connection._connection._statement_cache.clear()
+    # Force statement_cache_size=0 at the asyncpg driver level on every connection
+    @event.listens_for(engine.sync_engine, "do_connect")
+    def force_no_prepare(dialect, conn_rec, cargs, cparams):
+        cparams["statement_cache_size"] = 0
+        cparams["prepared_statement_cache_size"] = 0
 
     return engine
+
 
 engine = _build_engine()
 
@@ -60,17 +57,20 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False,
 )
 
+
 class Base(DeclarativeBase):
     pass
+
 
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
 
+
 async def ping_database() -> None:
-    # Use text() with execution_options to skip prepare
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
+
 
 async def verify_database_connection() -> None:
     delay = float(settings.DB_RETRY_DELAY_SECONDS)
@@ -96,6 +96,7 @@ async def verify_database_connection() -> None:
     raise RuntimeError(
         f"Unable to connect to the configured database after {attempts} attempts."
     ) from last_error
+
 
 async def init_db():
     await verify_database_connection()
