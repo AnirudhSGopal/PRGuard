@@ -10,17 +10,14 @@ from app.services.db_migrations import apply_pending_migrations
 
 logger = logging.getLogger("prguard")
 
-
 def _build_engine():
     database_url = settings.database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL must be set before the backend starts.")
-
     engine_kwargs: dict[str, object] = {
         "echo": settings.is_development(),
         "pool_pre_ping": True,
     }
-
     if database_url.startswith("sqlite"):
         engine_kwargs["connect_args"] = {"check_same_thread": False}
         engine_kwargs["poolclass"] = NullPool
@@ -33,7 +30,6 @@ def _build_engine():
             "command_timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
             "statement_cache_size": 0,
         }
-
         engine_kwargs.update(
             {
                 "pool_size": max(int(settings.DB_POOL_SIZE), 1),
@@ -42,13 +38,9 @@ def _build_engine():
                 "pool_recycle": max(int(settings.DB_POOL_RECYCLE), 0),
                 "pool_use_lifo": True,
                 "connect_args": connect_args,
-                # Disable SQLAlchemy's prepared statement cache for asyncpg.
-                "prepared_statement_cache_size": 0,
             }
         )
-
     return create_async_engine(database_url, **engine_kwargs)
-
 
 engine = _build_engine()
 
@@ -58,27 +50,22 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False,
 )
 
-
 class Base(DeclarativeBase):
     pass
-
 
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
 
-
 async def ping_database() -> None:
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
-
 
 async def verify_database_connection() -> None:
     delay = float(settings.DB_RETRY_DELAY_SECONDS)
     max_delay = float(settings.DB_MAX_RETRY_DELAY_SECONDS)
     attempts = max(int(settings.DB_CONNECT_RETRIES), 1)
     last_error: Exception | None = None
-
     for attempt in range(1, attempts + 1):
         try:
             await ping_database()
@@ -95,11 +82,9 @@ async def verify_database_connection() -> None:
             if attempt < attempts:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2.0, max_delay)
-
     raise RuntimeError(
         f"Unable to connect to the configured database after {attempts} attempts."
     ) from last_error
-
 
 async def init_db():
     await verify_database_connection()
