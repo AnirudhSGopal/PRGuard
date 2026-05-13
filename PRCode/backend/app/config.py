@@ -64,7 +64,10 @@ class Settings(BaseSettings):
     def validate_database_configuration(self):
         database_url = self.normalize_database_url((self.DATABASE_URL or "").strip())
         if not database_url:
-            raise ValueError("DATABASE_URL must be set in the environment.")
+            if self.is_development():
+                database_url = "sqlite+aiosqlite:///./prguard.db"
+            else:
+                raise ValueError("DATABASE_URL must be set in the environment.")
         self.DATABASE_URL = database_url
         return self
 
