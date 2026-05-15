@@ -63,6 +63,12 @@ export default function Callback() {
               if (parsed?.token && !session.token) {
                 session.token = parsed.token
               }
+              if (parsed?.gh_token && !session.gh_token) {
+                session.gh_token = parsed.gh_token
+              }
+              if (parsed?.github_token && !session.github_token) {
+                session.github_token = parsed.github_token
+              }
             }
           } catch {}
           localStorage.setItem('prguard_session', JSON.stringify(session))

@@ -93,6 +93,11 @@ client.interceptors.request.use((config) => {
           }
         } catch {}
       }
+
+      const githubToken = session?.gh_token || session?.github_token
+      if (githubToken) {
+        config.headers['X-GitHub-Token'] = githubToken
+      }
     }
   } catch {}
 
@@ -144,6 +149,8 @@ client.interceptors.response.use(
               const parsedStored = JSON.parse(stored)
               const merged = { ...me.data }
               if (parsedStored?.token && !merged.token) merged.token = parsedStored.token
+              if (parsedStored?.gh_token && !merged.gh_token) merged.gh_token = parsedStored.gh_token
+              if (parsedStored?.github_token && !merged.github_token) merged.github_token = parsedStored.github_token
               localStorage.setItem('prguard_session', JSON.stringify(merged))
             } catch {}
             // Session is valid but this specific endpoint failed — likely API key or permissions issue

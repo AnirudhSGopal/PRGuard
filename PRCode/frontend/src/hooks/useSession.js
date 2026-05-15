@@ -40,6 +40,12 @@ export const useSession = () => {
               if (parsed?.token && !userSession.token) {
                 userSession.token = parsed.token
               }
+              if (parsed?.gh_token && !userSession.gh_token) {
+                userSession.gh_token = parsed.gh_token
+              }
+              if (parsed?.github_token && !userSession.github_token) {
+                userSession.github_token = parsed.github_token
+              }
             }
           } catch {}
           localStorage.setItem('prguard_session', JSON.stringify(userSession))

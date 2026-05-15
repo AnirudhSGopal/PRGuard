@@ -1,6 +1,6 @@
 import httpx
 import logging
-from fastapi import APIRouter, Cookie, HTTPException, Query, Depends, Body
+from fastapi import APIRouter, Cookie, HTTPException, Query, Depends, Body, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func, delete, and_
 from app.models import get_db, Review, WebhookEvent, User, ConnectedRepository, WorkingOnIssue
@@ -37,6 +37,14 @@ def _headers(token: str) -> dict:
         "Accept":        "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def _extract_github_token(request: Request, cookie_token: str | None) -> str:
+    """Use the GitHub token from cookie first, then fall back to the frontend header."""
+    raw = (cookie_token or "").strip()
+    if not raw:
+        raw = (request.headers.get("X-GitHub-Token") or "").strip()
+    return raw
 
 async def _require_authenticated_user(
     current_user: User = Depends(requireUser),
@@ -235,13 +243,15 @@ async def disconnect_repo(
 
 @router.get("/issues")
 async def get_issues(
+    request: Request,
     repo: str = Query(default=""),
     current_user: User = Depends(requireUser),
     gh_token: str = Cookie(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Fetch open issues for a given repo (or its upstream if it's a fork)."""
-    if not gh_token:
+    gh_token_value = _extract_github_token(request, gh_token)
+    if not gh_token_value:
         raise HTTPException(status_code=401, detail="Missing auth token")
     if not repo:
         raise HTTPException(status_code=400, detail="Missing repo parameter")
@@ -250,7 +260,7 @@ async def get_issues(
         # ── 1. Check if it's a fork ──
         meta_resp = await client.get(
             f"{GITHUB_API}/repos/{repo}",
-            headers=_headers(gh_token),
+                headers=_headers(gh_token_value),
         )
         issue_repo = repo
         if meta_resp.status_code == 200:
@@ -261,7 +271,7 @@ async def get_issues(
         # ── 2. Fetch issues from the correct target ──
         resp = await client.get(
             f"{GITHUB_API}/repos/{issue_repo}/issues",
-            headers=_headers(gh_token),
+            headers=_headers(gh_token_value),
             params={
                 "state":    "open",
                 "per_page": 20,
@@ -338,19 +348,21 @@ async def toggle_working_on_issue(
 
 @router.get("/files")
 async def get_files(
+    request: Request,
     repo: str = Query(default=""),
     current_user: User = Depends(requireUser),
     gh_token: str = Cookie(default=None),
 ):
     """Fetch the top-level file tree for a repo via the Git Trees API."""
-    if not repo or not gh_token:
+    gh_token_value = _extract_github_token(request, gh_token)
+    if not repo or not gh_token_value:
         raise HTTPException(status_code=401, detail="Missing auth token or repo")
 
     async with httpx.AsyncClient() as client:
         # 1. get default branch
         meta_resp = await client.get(
             f"{GITHUB_API}/repos/{repo}",
-            headers=_headers(gh_token),
+            headers=_headers(gh_token_value),
         )
         if meta_resp.status_code != 200:
             raise HTTPException(status_code=502, detail="GitHub API error")
@@ -360,7 +372,7 @@ async def get_files(
         # 2. get tree (non-recursive for top-level speed)
         tree_resp = await client.get(
             f"{GITHUB_API}/repos/{repo}/git/trees/{default_branch}",
-            headers=_headers(gh_token),
+            headers=_headers(gh_token_value),
             params={"recursive": "1"},
         )
 

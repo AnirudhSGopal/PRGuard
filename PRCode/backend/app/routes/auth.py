@@ -67,7 +67,7 @@ def _build_redirect_page(target_url: str, status_text: str) -> HTMLResponse:
     )
 
 
-def _build_session_payload(user: User, session_token: str) -> dict:
+def _build_session_payload(user: User, session_token: str, github_token: str | None = None) -> dict:
     """Build session payload including the actual token for header-based auth fallback."""
     return {
         "authenticated": True,
@@ -83,6 +83,7 @@ def _build_session_payload(user: User, session_token: str) -> dict:
         "html_url": "",
         "is_admin": False,
         "auth_provider": "github",
+        "gh_token": github_token or None,
     }
 
 
@@ -278,7 +279,7 @@ async def github_callback(
     db_user.session_token_hash = hash_session_token(session_token)
     db_user.last_login_at = datetime.now(timezone.utc)
 
-    session_payload = _build_session_payload(db_user, session_token)
+    session_payload = _build_session_payload(db_user, session_token, access_token)
     encoded = base64.b64encode(json.dumps(session_payload).encode()).decode()
     callback_target = f"{frontend_url}/auth/callback?session={encoded}"
     response = _build_redirect_page(callback_target, "Signing in, please wait...")
