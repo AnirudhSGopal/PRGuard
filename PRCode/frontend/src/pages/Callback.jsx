@@ -55,6 +55,16 @@ export default function Callback() {
         const session = await getMe()
         if (!active) return
         if (session?.authenticated && session?.role === 'user') {
+          // Preserve token if present in localStorage (backend /me may omit token)
+          try {
+            const stored = localStorage.getItem('prguard_session')
+            if (stored) {
+              const parsed = JSON.parse(stored)
+              if (parsed?.token && !session.token) {
+                session.token = parsed.token
+              }
+            }
+          } catch {}
           localStorage.setItem('prguard_session', JSON.stringify(session))
           setStatus('Login successful! Redirecting...')
           timerId = setTimeout(() => navigate('/dashboard', { replace: true }), 600)

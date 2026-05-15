@@ -32,6 +32,16 @@ export const useSession = () => {
         if (!active) return
 
         if (userSession?.authenticated && userSession?.role === 'user') {
+          // Preserve token if it exists in localStorage but backend /me omitted it
+          try {
+            const stored = localStorage.getItem('prguard_session')
+            if (stored) {
+              const parsed = JSON.parse(stored)
+              if (parsed?.token && !userSession.token) {
+                userSession.token = parsed.token
+              }
+            }
+          } catch {}
           localStorage.setItem('prguard_session', JSON.stringify(userSession))
           setSessionRole('user')
           setSessionUser(userSession)
