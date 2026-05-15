@@ -64,6 +64,17 @@ client.interceptors.request.use((config) => {
       const session = JSON.parse(stored)
       if (session?.token && session.token !== 'cookie') {
         config.headers['X-Session-Token'] = session.token
+        // Debug: log when we attach a session header in development or when explicitly enabled
+        try {
+          const debugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG_API === '1'
+          if (debugEnabled && typeof console !== 'undefined' && console.debug) {
+            console.debug('[API] Attaching X-Session-Token header', {
+              url: config.url,
+              method: config.method,
+              tokenPreview: session.token ? `${session.token.slice(0, 6)}...` : null,
+            })
+          }
+        } catch {}
       }
     }
   } catch {}
@@ -79,6 +90,18 @@ client.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error?.response?.status === 401) {
+      // Log 401s in dev or when explicit debug flag is set to aid diagnosis
+      try {
+        const debugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG_API === '1'
+        if (debugEnabled && typeof console !== 'undefined' && console.error) {
+          console.error('[API] 401 Unauthorized', {
+            url: error.config?.url,
+            method: error.config?.method,
+            status: error.response?.status,
+            response: error.response?.data,
+          })
+        }
+      } catch {}
       const stored = localStorage.getItem('prguard_session')
       if (stored) {
         window.dispatchEvent(new CustomEvent('auth:expired'))
