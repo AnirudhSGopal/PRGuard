@@ -20,6 +20,9 @@ const client = axios.create({
   timeout:         60000,
 })
 
+// Raw client without interceptors for health-checking session state
+const rawClient = axios.create({ baseURL: BASE_URL, withCredentials: true, timeout: 15000 })
+
 let providerCache = 'claude'
 
 const normalizeProvider = (provider) => {
@@ -88,25 +91,43 @@ client.interceptors.request.use((config) => {
 // session before useSession can fall back to it.
 client.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error?.response?.status === 401) {
-      // Log 401s in dev or when explicit debug flag is set to aid diagnosis
-      try {
-        const debugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG_API === '1'
-        if (debugEnabled && typeof console !== 'undefined' && console.error) {
-          console.error('[API] 401 Unauthorized', {
-            url: error.config?.url,
-            method: error.config?.method,
-            status: error.response?.status,
-            response: error.response?.data,
-          })
-        }
-      } catch {}
-      const stored = localStorage.getItem('prguard_session')
-      if (stored) {
-        window.dispatchEvent(new CustomEvent('auth:expired'))
+  async (error) => {
+    try {
+      const debugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG_API === '1'
+      if (debugEnabled && error?.response?.status === 401 && typeof console !== 'undefined' && console.error) {
+        console.error('[API] 401 Unauthorized', {
+          url: error.config?.url,
+          method: error.config?.method,
+          status: error.response?.status,
+          response: error.response?.data,
+        })
       }
+    } catch {}
+
+    // Only attempt to validate session if a localStorage session exists.
+    const stored = (() => { try { return localStorage.getItem('prguard_session') } catch { return null } })()
+    if (!stored) return Promise.reject(error)
+
+    // Re-check server session via a raw client to avoid interceptor recursion.
+    try {
+      const me = await rawClient.get('/auth/me', { validateStatus: (s) => s === 200 || s === 401 })
+      if (me.status === 200 && me.data) {
+        // Server still sees a valid session. Preserve any existing token in localStorage
+        try {
+          const parsedStored = JSON.parse(stored)
+          const merged = { ...me.data }
+          if (parsedStored?.token && !merged.token) merged.token = parsedStored.token
+          localStorage.setItem('prguard_session', JSON.stringify(merged))
+        } catch {}
+        // Do not dispatch auth:expired — let UI continue using refreshed session
+        return Promise.reject(error)
+      }
+    } catch (e) {
+      // If the validation request failed, fall back to expiring the session below.
     }
+
+    // Final fallback: server considers session invalid — emit auth:expired
+    window.dispatchEvent(new CustomEvent('auth:expired'))
     return Promise.reject(error)
   }
 )
