@@ -24,6 +24,7 @@ const client = axios.create({
 const rawClient = axios.create({ baseURL: BASE_URL, withCredentials: true, timeout: 15000 })
 
 let providerCache = 'claude'
+let storedApiKey = ''
 
 const normalizeProvider = (provider) => {
   const normalized = (provider || '').trim().toLowerCase()
@@ -31,13 +32,29 @@ const normalizeProvider = (provider) => {
   return normalized || 'claude'
 }
 
+// Load API key from localStorage on module init
+const initApiKey = () => {
+  try {
+    const stored = localStorage.getItem('prguard_api_key')
+    if (stored) storedApiKey = stored
+  } catch {}
+}
+initApiKey()
+
 export const getScopedProvider = () => providerCache
 export const setScopedProvider = (provider) => { providerCache = normalizeProvider(provider) }
-
-// Legacy helpers kept for compatibility.
-export const getScopedApiKey = () => ''
-export const setScopedApiKey = () => {}
-export const clearScopedApiKey = () => {}
+export const getScopedApiKey = () => storedApiKey
+export const setScopedApiKey = (key) => {
+  storedApiKey = (key || '').trim()
+  try {
+    if (storedApiKey) {
+      localStorage.setItem('prguard_api_key', storedApiKey)
+    } else {
+      localStorage.removeItem('prguard_api_key')
+    }
+  } catch {}
+}
+export const clearScopedApiKey = () => setScopedApiKey('')
 
 
 export const normalizeApiKeyStatus = (payload = {}) => {
@@ -55,11 +72,9 @@ export const normalizeApiKeyStatus = (payload = {}) => {
   }
 }
 
-// ── Request interceptor: attach session token as header ───────────────────────
-// The cookie is blocked by cross-domain restrictions (Vercel frontend + Render backend).
-// Instead, the session token is stored in localStorage during OAuth callback and
-// sent as X-Session-Token header on every request. The backend falls back to this
-// header when the cookie is missing.
+// ── Request interceptor: attach session token and API key headers ────────────
+// Session token is stored in localStorage and sent as X-Session-Token header.
+// API key (if available) is sent as x-api-key header for LLM provider identification.
 client.interceptors.request.use((config) => {
   try {
     const stored = localStorage.getItem('prguard_session')
@@ -67,7 +82,6 @@ client.interceptors.request.use((config) => {
       const session = JSON.parse(stored)
       if (session?.token && session.token !== 'cookie') {
         config.headers['X-Session-Token'] = session.token
-        // Debug: log when we attach a session header in development or when explicitly enabled
         try {
           const debugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG_API === '1'
           if (debugEnabled && typeof console !== 'undefined' && console.debug) {
@@ -81,17 +95,22 @@ client.interceptors.request.use((config) => {
       }
     }
   } catch {}
+
+  // Attach API key header if available
+  if (storedApiKey) {
+    config.headers['x-api-key'] = storedApiKey
+  }
+
   return config
 })
 
 
 // ── Global 401 handler ────────────────────────────────────────────────────────
-// Only fires auth:expired if a session exists in localStorage.
-// Without this guard, 401s on initial page load wipe a valid localStorage
-// session before useSession can fall back to it.
+// Validates session on 401 before expiring; distinguishes session vs API key errors.
 client.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // Log 401s in dev mode
     try {
       const debugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG_API === '1'
       if (debugEnabled && error?.response?.status === 401 && typeof console !== 'undefined' && console.error) {
@@ -104,39 +123,43 @@ client.interceptors.response.use(
       }
     } catch {}
 
-    // Only attempt to validate session if a localStorage session exists.
-    const stored = (() => { try { return localStorage.getItem('prguard_session') } catch { return null } })()
-    if (!stored) return Promise.reject(error)
-
-    // Re-check server session via a raw client to avoid interceptor recursion.
-    try {
-      // If a token is stored in localStorage, include it in the validation request
-      let tokenHeader = undefined
-      try {
-        const parsedStored = JSON.parse(stored)
-        if (parsedStored?.token && parsedStored.token !== 'cookie') tokenHeader = parsedStored.token
-      } catch {}
-      const me = await rawClient.get('/auth/me', {
-        validateStatus: (s) => s === 200 || s === 401,
-        headers: tokenHeader ? { 'X-Session-Token': tokenHeader } : undefined,
-      })
-      if (me.status === 200 && me.data) {
-        // Server still sees a valid session. Preserve any existing token in localStorage
+    if (error?.response?.status === 401) {
+      // Only attempt to validate session if a localStorage session exists.
+      const stored = (() => { try { return localStorage.getItem('prguard_session') } catch { return null } })()
+      if (stored) {
+        // Re-check server session via a raw client to avoid interceptor recursion.
         try {
-          const parsedStored = JSON.parse(stored)
-          const merged = { ...me.data }
-          if (parsedStored?.token && !merged.token) merged.token = parsedStored.token
-          localStorage.setItem('prguard_session', JSON.stringify(merged))
-        } catch {}
-        // Do not dispatch auth:expired — let UI continue using refreshed session
-        return Promise.reject(error)
+          let tokenHeader = undefined
+          try {
+            const parsedStored = JSON.parse(stored)
+            if (parsedStored?.token && parsedStored.token !== 'cookie') tokenHeader = parsedStored.token
+          } catch {}
+          const me = await rawClient.get('/auth/me', {
+            validateStatus: (s) => s === 200 || s === 401,
+            headers: tokenHeader ? { 'X-Session-Token': tokenHeader } : undefined,
+          })
+          if (me.status === 200 && me.data) {
+            // Server still sees a valid session. Preserve any existing token in localStorage
+            try {
+              const parsedStored = JSON.parse(stored)
+              const merged = { ...me.data }
+              if (parsedStored?.token && !merged.token) merged.token = parsedStored.token
+              localStorage.setItem('prguard_session', JSON.stringify(merged))
+            } catch {}
+            // Session is valid but this specific endpoint failed — likely API key or permissions issue
+            // Do not dispatch auth:expired — let the specific handler deal with it
+            error.isSessionValid = true
+            return Promise.reject(error)
+          }
+        } catch (e) {
+          // If the validation request failed, fall back to expiring the session below.
+        }
+
+        // Session is invalid — emit auth:expired
+        window.dispatchEvent(new CustomEvent('auth:expired'))
       }
-    } catch (e) {
-      // If the validation request failed, fall back to expiring the session below.
     }
 
-    // Final fallback: server considers session invalid — emit auth:expired
-    window.dispatchEvent(new CustomEvent('auth:expired'))
     return Promise.reject(error)
   }
 )
@@ -262,14 +285,20 @@ export const getUserProfile = async () => {
 export const saveUserApiKey = async (provider, apiKey, makeActive = true) => {
   const normalized = normalizeProvider(provider)
   const res = await client.post('/user/api-key', { provider: normalized, api_key: apiKey, make_active: makeActive })
-  if (makeActive) providerCache = normalized
+  if (makeActive) {
+    providerCache = normalized
+    setScopedApiKey(apiKey) // Persist to localStorage
+  }
   return res.data
 }
 
 export const saveApiKey = async (provider, apiKey, makeActive = true) => {
   const normalized = normalizeProvider(provider)
   const res = await client.put(`/api/api-keys/${normalized}`, { api_key: apiKey, make_active: makeActive })
-  if (makeActive) providerCache = normalized
+  if (makeActive) {
+    providerCache = normalized
+    setScopedApiKey(apiKey) // Persist to localStorage
+  }
   return res.data
 }
 
