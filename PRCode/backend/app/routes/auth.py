@@ -312,10 +312,17 @@ async def github_callback(
 
 @router.get("/me")
 async def get_current_user(
+    request: Request,
     user_token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE_NAME),
     db: AsyncSession = Depends(get_db),
 ):
-    db_user = await get_user_from_user_session(db, user_token)
+    # Extract session token from cookie first, then fall back to X-Session-Token header
+    # This matches the pattern used by requireAuth and get_current_user dependency
+    raw_token = (user_token or "").strip()
+    if not raw_token:
+        raw_token = (request.headers.get("X-Session-Token") or "").strip()
+    
+    db_user = await get_user_from_user_session(db, raw_token if raw_token else None)
     if not db_user:
         return {
             "authenticated": False,
