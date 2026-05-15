@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getApiKeyStatus } from '../api/client'
+import { getApiKeyStatus, normalizeApiKeyStatus } from '../api/client'
 
 export const useApiKeyGuard = () => {
   const [hasKey, setHasKey] = useState(false)
@@ -9,9 +9,9 @@ export const useApiKeyGuard = () => {
     let mounted = true
     const checkKey = async () => {
       try {
-        const status = await getApiKeyStatus()
+        const status = normalizeApiKeyStatus(await getApiKeyStatus())
         if (mounted) {
-          setHasKey(Boolean(status?.has_any_key))
+          setHasKey(Boolean(status.has_any_key))
         }
       } catch (err) {
         // Log the error but don't immediately lock the user out if we previously had a key.

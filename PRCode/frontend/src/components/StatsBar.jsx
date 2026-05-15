@@ -1,7 +1,7 @@
 import { useContext, useState, useEffect } from 'react'
 import { ThemeContext } from '../App'
 import { getTheme } from '../utils/helpers'
-import { getApiKeyStatus, getScopedProvider } from '../api/client'
+import { getApiKeyStatus, getScopedProvider, normalizeApiKeyStatus } from '../api/client'
 
 const PROVIDERS = [
   { id: 'claude', label: 'Claude Sonnet',  sub: 'Anthropic · Best for code' },
@@ -36,9 +36,9 @@ export default function RepoList({
     const read = async () => {
       const saved = getScopedProvider()
       const normalized = saved === 'gpt4o' ? 'gpt' : saved
-      const status = await getApiKeyStatus().catch(() => ({ has_any_key: false }))
+      const status = normalizeApiKeyStatus(await getApiKeyStatus().catch(() => ({})))
       if (normalized) setActiveProvider(normalized)
-      setHasKey(Boolean(status?.has_any_key))
+      setHasKey(Boolean(status.has_any_key))
     }
     read()
     window.addEventListener('prguard:api-keys-updated', read)

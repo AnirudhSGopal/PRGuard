@@ -260,9 +260,8 @@ export default function Dashboard() {
     const key = apiKeys[providerId]
     if (!key || key.trim() === '') return
 
-    // Only block if user typed the placeholder text exactly unchanged
-    const placeholders = ['sk-ant-...', 'sk-...', 'AIza...']
-    if (placeholders.includes(key.trim())) return
+    // Only block if user typed the placeholder text exactly unchanged.
+    if (['sk-ant-...', 'sk-...', 'AIza...'].includes(key.trim())) return
 
     try {
       await saveApiKey(providerId, key.trim(), true)
@@ -372,6 +371,7 @@ export default function Dashboard() {
           <ChatPanel
             selectedRepo={selectedRepo}
             selectedIssue={selectedIssue}
+            connectedRepos={sortedRepos}
             chatInput={chatInput}
             setChatInput={setChatInput}
             autoSend={autoSend}

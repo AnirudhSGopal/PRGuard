@@ -524,10 +524,19 @@ export function ConnectRepoModal({ t, dark, onClose, onConnect }) {
 }
 
 // ── Main ChatPanel ────────────────────────────────────────────────────────────
-export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setChatInput, autoSend, setAutoSend, onRepoConnect }) {
+export default function ChatPanel({ selectedRepo, selectedIssue, connectedRepos = [], chatInput, setChatInput, autoSend, setAutoSend, onRepoConnect }) {
   const { theme } = useContext(ThemeContext)
   const t = getTheme(theme)
   const dark = theme === 'dark'
+  const repoLabel = typeof selectedRepo === 'string' ? selectedRepo.trim() : (selectedRepo ? String(selectedRepo).trim() : '')
+  const hasRepo = Boolean(repoLabel)
+  const hasConnectedRepos = Array.isArray(connectedRepos) && connectedRepos.length > 0
+  const headerText = !hasRepo
+    ? 'Select a repository to get started'
+    : selectedIssue
+      ? `Issue #${selectedIssue.number} · ${repoLabel}`
+      : `Chatting about ${repoLabel}`
+  const headerDotColor = !hasRepo ? (dark ? '#6b7280' : '#f59e0b') : '#22c55e'
 
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(false)
@@ -542,6 +551,7 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
   const [connectOpen, setConnectOpen] = useState(false)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   const [vizMode, setVizMode] = useState(false)
+  const [repoHint, setRepoHint] = useState('')
 
   const bottomRef = useRef(null)
   const textareaRef = useRef(null)
@@ -581,7 +591,14 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
     setMessages([])
     setAttachedFiles([])
     setChatInput('')
+    setRepoHint('')
   }, [selectedRepo, setChatInput])
+
+  useEffect(() => {
+    if (hasRepo) {
+      setRepoHint('')
+    }
+  }, [hasRepo])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
 
@@ -622,7 +639,15 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
   }, [])
 
   const sendVisualization = async () => {
-    if (!selectedRepo || loading) return
+    if (!selectedRepo) {
+      if (!hasConnectedRepos) {
+        setConnectOpen(true)
+      } else {
+        setRepoHint('Select a repository from the sidebar to start chatting.')
+      }
+      return
+    }
+    if (loading) return
     if (noKey) { setNoKeyModal(true); return }
 
     const userMsg = {
@@ -700,7 +725,16 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
 
   const sendMessage = async (text, historyOverride = null) => {
     const content = (text ?? chatInput ?? '').trim()
-    if (!content || loading) return
+    if (!selectedRepo || !content || loading) {
+      if (!selectedRepo) {
+        if (!hasConnectedRepos) {
+          setConnectOpen(true)
+        } else {
+          setRepoHint('Select a repository from the sidebar to start chatting.')
+        }
+      }
+      return
+    }
     if (noKey) { setNoKeyModal(true); return }
 
     setChatInput('')
@@ -798,9 +832,9 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
 
       {/* Header */}
       <div style={{ padding: '10px 16px', borderBottom: `1px solid ${t.border}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: headerDotColor, flexShrink: 0 }} />
         <span style={{ fontSize: 12, color: t.text2 }}>
-          {selectedIssue ? `Issue #${selectedIssue.number} · ${selectedRepo}` : `Chatting about ${selectedRepo}`}
+          {headerText}
         </span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', background: dark ? '#1e2535' : '#f0f0f0', borderRadius: 7, padding: 2, gap: 1 }}>
@@ -825,10 +859,32 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
           <div style={{ padding: '16px 16px 8px' }}>
             <div style={{ background: dark ? '#13161b' : '#fff', border: `1px solid ${t.border}`, borderRadius: 12, padding: '14px 16px' }}>
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: t.accentText, marginBottom: 8 }}>PRGUARD AI</div>
-              <p style={{ fontSize: 13, color: t.text, lineHeight: 1.65, margin: 0 }}>
-                Hello! I am ready to help you understand this repository. Ask me anything — or click an <strong>issue</strong> or <strong>file</strong> on the left to instantly ask about it.
-                {selectedIssue && <><br /><br />Click <strong>⬡ Visualize</strong> above to get an AI-powered analysis with charts, file breakdown, and fix steps.</>}
-              </p>
+              {!hasRepo ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <p style={{ fontSize: 13, color: t.text, lineHeight: 1.65, margin: 0 }}>
+                    {hasConnectedRepos
+                      ? 'Select a repository from the sidebar to start chatting.'
+                      : 'Connect a repository to start chatting.'}
+                  </p>
+                  <button
+                    onClick={() => {
+                      if (hasConnectedRepos) {
+                        setRepoHint('Select a repository from the sidebar to start chatting.')
+                        return
+                      }
+                      setConnectOpen(true)
+                    }}
+                    style={{ alignSelf: 'flex-start', padding: '9px 12px', fontSize: 12, fontWeight: 600, color: t.accentFg, background: t.accentBg, border: `1px solid ${t.accent}`, borderRadius: 8, cursor: 'pointer', transition: 'all 0.15s' }}
+                  >
+                    {hasConnectedRepos ? 'Select from sidebar' : 'Connect a repository'}
+                  </button>
+                </div>
+              ) : (
+                <p style={{ fontSize: 13, color: t.text, lineHeight: 1.65, margin: 0 }}>
+                  Hello! I am ready to help you understand this repository. Ask me anything — or click an <strong>issue</strong> or <strong>file</strong> on the left to instantly ask about it.
+                  {selectedIssue && <><br /><br />Click <strong>⬡ Visualize</strong> above to get an AI-powered analysis with charts, file breakdown, and fix steps.</>}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -837,6 +893,14 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
           <MessageBubble key={i} msg={msg} t={t} dark={dark} onFollowUp={handleFollowUp} />
         ))}
         {loading && <TypingIndicator t={t} />}
+
+        {!hasRepo && repoHint && (
+          <div style={{ padding: '0 16px 8px' }}>
+            <div style={{ fontSize: 11, color: dark ? '#fbbf24' : '#b45309', background: dark ? '#f59e0b14' : '#fef3c7', border: `1px solid ${dark ? '#f59e0b33' : '#f59e0b55'}`, borderRadius: 8, padding: '8px 10px' }}>
+              {repoHint}
+            </div>
+          </div>
+        )}
 
         {noKey && !loading && messages.length === 0 && (
           <div style={{ padding: '6px 16px' }}>
@@ -852,13 +916,26 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
       {/* Suggestion chips */}
       {isEmpty && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, padding: '0 16px 10px', flexShrink: 0 }}>
-          {selectedRepo && (
-            <button onClick={sendVisualization}
+          {hasRepo ? (
+            <button onClick={sendVisualization} disabled={!selectedRepo || loading || noKey}
               style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '9px 12px', fontSize: 12, fontWeight: 600, color: t.accentFg, background: t.accentBg, border: `1px solid ${t.accent}`, borderRadius: 8, cursor: 'pointer', transition: 'all 0.15s' }}>
               {selectedIssue ? `⬡ Visualize Issue #${selectedIssue.number} with AI` : '⬡ Visualize Repository with AI'}
             </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (hasConnectedRepos) {
+                  setRepoHint('Select a repository from the sidebar to start chatting.')
+                  return
+                }
+                setConnectOpen(true)
+              }}
+              style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '9px 12px', fontSize: 12, fontWeight: 600, color: t.accentFg, background: t.accentBg, border: `1px solid ${t.accent}`, borderRadius: 8, cursor: 'pointer', transition: 'all 0.15s' }}
+            >
+              {hasConnectedRepos ? 'Select a repository from the sidebar' : 'Connect a repository'}
+            </button>
           )}
-          {SUGGESTED.map((s, i) => (
+          {hasRepo && SUGGESTED.map((s, i) => (
             <button key={i} onClick={() => { if (noKey) { setNoKeyModal(true); return } sendMessage(s) }}
               style={{ textAlign: 'left', padding: '8px 12px', fontSize: 11, color: t.text3, background: dark ? '#13161b' : '#fff', border: `1px solid ${t.border}`, borderRadius: 8, cursor: 'pointer', transition: 'all 0.15s' }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = t.accent; e.currentTarget.style.color = t.accentText }}
@@ -883,8 +960,8 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
 
         {vizMode ? (
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={sendVisualization} disabled={loading}
-              style={{ flex: 1, padding: '10px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', background: loading ? (dark ? '#1e2535' : '#e8e8e8') : t.accentBg, color: loading ? mutedText : t.accentFg, border: `1px solid ${loading ? t.border : t.accent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all 0.15s' }}>
+            <button onClick={sendVisualization} disabled={!selectedRepo || loading}
+              style={{ flex: 1, padding: '10px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: !selectedRepo || loading ? 'not-allowed' : 'pointer', background: !selectedRepo || loading ? (dark ? '#1e2535' : '#e8e8e8') : t.accentBg, color: !selectedRepo || loading ? mutedText : t.accentFg, border: `1px solid ${!selectedRepo || loading ? t.border : t.accent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all 0.15s' }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
                 <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
@@ -912,7 +989,20 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
                 <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, background: dark ? '#0f1318' : '#fff', border: `1px solid ${dark ? '#1e2a3a' : '#e2e2e2'}`, borderRadius: 10, overflow: 'hidden', width: 210, boxShadow: dark ? '0 -8px 24px rgba(0,0,0,0.6)' : '0 -4px 16px rgba(0,0,0,0.1)', zIndex: 100 }}>
                   {[
                     { icon: '📎', label: 'Attach file', desc: 'Upload a file to discuss', action: () => fileInputRef.current?.click() },
-                    { icon: '📁', label: 'Connect Repository', desc: 'Index a GitHub repo', action: () => { setConnectOpen(true); setPlusMenuOpen(false) } },
+                    {
+                      icon: '📁',
+                      label: hasConnectedRepos ? 'Select repository' : 'Connect Repository',
+                      desc: hasConnectedRepos ? 'Pick a repo from the sidebar' : 'Index a GitHub repo',
+                      action: () => {
+                        if (hasConnectedRepos) {
+                          setRepoHint('Select a repository from the sidebar to start chatting.')
+                          setPlusMenuOpen(false)
+                          return
+                        }
+                        setConnectOpen(true)
+                        setPlusMenuOpen(false)
+                      },
+                    },
                     { icon: '⬡', label: 'Visualize issue', desc: 'AI chart + analysis', action: () => { setVizMode(true); setPlusMenuOpen(false) } },
                   ].map((item, i) => (
                     <button key={i} onClick={item.action}
@@ -934,10 +1024,16 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
               onChange={e => setChatInput(e.target.value)}
               onInput={handleInput}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-              placeholder={noKey ? "Please add an API key in settings to chat..." : "Ask anything about this codebase... or click an issue / file →"}
-              disabled={noKey || loading}
+              placeholder={!hasRepo
+                ? (hasConnectedRepos
+                  ? 'Select a repository from the sidebar to start chatting...'
+                  : 'Connect a repository to start chatting...')
+                : noKey
+                  ? 'Please add an API key in settings to chat...'
+                  : 'Ask anything about this codebase... or click an issue / file →'}
+              disabled={!hasRepo || noKey || loading}
               rows={1}
-              style={{ flex: 1, resize: 'none', outline: 'none', background: 'transparent', border: 'none', padding: '4px 4px', fontSize: 13, fontFamily: 'inherit', color: t.text, lineHeight: 1.55, minHeight: 80, maxHeight: 200, overflowY: 'auto', cursor: noKey ? 'not-allowed' : 'text', opacity: noKey ? 0.6 : 1 }} />
+              style={{ flex: 1, resize: 'none', outline: 'none', background: 'transparent', border: 'none', padding: '4px 4px', fontSize: 13, fontFamily: 'inherit', color: t.text, lineHeight: 1.55, minHeight: 80, maxHeight: 200, overflowY: 'auto', cursor: !hasRepo || noKey ? 'not-allowed' : 'text', opacity: !hasRepo || noKey ? 0.6 : 1 }} />
 
             <div style={{ position: 'relative', flexShrink: 0 }} ref={modelBtnRef}>
               <button onClick={() => setModelMenuOpen(p => !p)}
@@ -979,8 +1075,8 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
                 </svg>
               </button>
             ) : (
-              <button onClick={() => sendMessage()} disabled={noKey || !(chatInput ?? '').trim() || loading}
-                style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: (chatInput ?? '').trim() && !loading && !noKey ? 'pointer' : 'not-allowed', background: (chatInput ?? '').trim() && !loading && !noKey ? t.accent : (dark ? '#1e2535' : '#e8eaf0'), border: `1px solid ${(chatInput ?? '').trim() && !loading && !noKey ? t.accent : t.border}`, transition: 'all 0.15s', color: (chatInput ?? '').trim() && !loading && !noKey ? t.accentFg : t.text3 }}>
+              <button onClick={() => sendMessage()} disabled={!hasRepo || noKey || !(chatInput ?? '').trim() || loading}
+                style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: (chatInput ?? '').trim() && !loading && !noKey && hasRepo ? 'pointer' : 'not-allowed', background: (chatInput ?? '').trim() && !loading && !noKey && hasRepo ? t.accent : (dark ? '#1e2535' : '#e8eaf0'), border: `1px solid ${(chatInput ?? '').trim() && !loading && !noKey && hasRepo ? t.accent : t.border}`, transition: 'all 0.15s', color: (chatInput ?? '').trim() && !loading && !noKey && hasRepo ? t.accentFg : t.text3 }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
                 </svg>

@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const ENV_BASE_URL = ''
+const ENV_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim()
 const DEV_PROXY_TARGET = (import.meta.env.VITE_API_PROXY_TARGET || '').trim()
 const IS_BROWSER = typeof window !== 'undefined'
 const DERIVED_LOCAL_API_ORIGIN =
@@ -36,6 +36,21 @@ export const getScopedApiKey = () => ''
 export const setScopedApiKey = () => {}
 export const clearScopedApiKey = () => {}
 
+
+export const normalizeApiKeyStatus = (payload = {}) => {
+  const items = Array.isArray(payload.items) ? payload.items : []
+  const active_provider = normalizeProvider(payload.active_provider || 'claude')
+  const has_any_key = typeof payload.has_any_key === 'boolean'
+    ? payload.has_any_key
+    : items.some(item => Boolean(item?.has_key))
+
+  return {
+    ...payload,
+    items,
+    active_provider,
+    has_any_key,
+  }
+}
 
 // ── Request interceptor: attach session token as header ───────────────────────
 // The cookie is blocked by cross-domain restrictions (Vercel frontend + Render backend).
@@ -178,19 +193,17 @@ export const sendMessage = async (message, repo, issueNumber, history = [], opti
 
 export const getApiKeyStatus = async () => {
   const res = await client.get('/api/api-keys')
-  const payload = res.data || { items: [], active_provider: 'claude', has_any_key: false }
-  const active = normalizeProvider(payload.active_provider || 'claude')
-  providerCache = active
-  return { ...payload, active_provider: active }
+  const payload = normalizeApiKeyStatus(res.data || {})
+  providerCache = payload.active_provider
+  return payload
 }
 
 export const getUserProfile = async () => {
   const res = await client.get('/user/profile')
   const payload = res.data || {}
-  const status = payload.api_key_status || { items: [], active_provider: 'claude', has_any_key: false }
-  const active = normalizeProvider(status.active_provider || 'claude')
-  providerCache = active
-  return { ...payload, api_key_status: { ...status, active_provider: active } }
+  const status = normalizeApiKeyStatus(payload.api_key_status || {})
+  providerCache = status.active_provider
+  return { ...payload, api_key_status: status }
 }
 
 export const saveUserApiKey = async (provider, apiKey, makeActive = true) => {
