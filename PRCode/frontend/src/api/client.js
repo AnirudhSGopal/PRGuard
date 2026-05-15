@@ -110,7 +110,16 @@ client.interceptors.response.use(
 
     // Re-check server session via a raw client to avoid interceptor recursion.
     try {
-      const me = await rawClient.get('/auth/me', { validateStatus: (s) => s === 200 || s === 401 })
+      // If a token is stored in localStorage, include it in the validation request
+      let tokenHeader = undefined
+      try {
+        const parsedStored = JSON.parse(stored)
+        if (parsedStored?.token && parsedStored.token !== 'cookie') tokenHeader = parsedStored.token
+      } catch {}
+      const me = await rawClient.get('/auth/me', {
+        validateStatus: (s) => s === 200 || s === 401,
+        headers: tokenHeader ? { 'X-Session-Token': tokenHeader } : undefined,
+      })
       if (me.status === 200 && me.data) {
         // Server still sees a valid session. Preserve any existing token in localStorage
         try {
