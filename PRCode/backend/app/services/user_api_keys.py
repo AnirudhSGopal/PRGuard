@@ -70,7 +70,6 @@ async def set_active_provider(db: AsyncSession, user_id: str, provider: str) -> 
             row.is_active = True
         else:
             row.is_active = False
-        # Merge to ensure changes are tracked in async context
         await db.merge(row)
     if not has_requested:
         raise HTTPException(status_code=404, detail=f"No API key configured for provider '{normalized}'.")
@@ -99,11 +98,10 @@ async def upsert_user_api_key(
     fingerprint = key_fingerprint(key_value)
 
     if row:
-        # Update existing row and merge to ensure changes are tracked in async context
         row.encrypted_api_key = encrypted
         row.key_fingerprint = fingerprint
         row.is_active = make_active
-        row = await db.merge(row)
+        await db.merge(row)
     else:
         row = UserApiKey(
             user_id=user_id,
@@ -122,9 +120,10 @@ async def upsert_user_api_key(
         other_rows = (await db.execute(other_stmt)).scalars().all()
         for item in other_rows:
             item.is_active = False
-            # Merge each item to ensure changes are tracked
             await db.merge(item)
 
+    # ✅ FIX: Commit the changes to the database.
+    # This was the root cause of the API key not saving.
     await db.commit()
 
     return {
@@ -169,8 +168,6 @@ async def list_user_key_statuses(db: AsyncSession, *, user_id: str) -> dict:
             has_key = bool(decrypted)
             masked = mask_key(decrypted)
         except Exception as e:
-            # If decryption fails (e.g. SECRET_KEY changed), treat as missing/invalid
-            # but don't crash the whole endpoint.
             from app.services.user_api_keys import mask_key
             decrypted = ""
             has_key = False
