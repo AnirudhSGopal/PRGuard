@@ -607,6 +607,9 @@ async def _upgrade_users_identity_integrity(conn: AsyncConnection) -> None:
     await conn.run_sync(_merge_duplicate_users_sync)
     await conn.run_sync(_enforce_user_identity_constraints_sync)
 
+async def _add_expires_at_column(conn: AsyncConnection) -> None:
+    # Add migration to add expires_at column
+    await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE"))
 
 MIGRATIONS: list[Migration] = [
     Migration(name="0001_users_schema_sync", upgrade=_upgrade_users_schema),
@@ -614,6 +617,7 @@ MIGRATIONS: list[Migration] = [
     Migration(name="0003_auth_provider_split", upgrade=_upgrade_users_schema),
     Migration(name="0004_neon_compat_tables", upgrade=_upgrade_neon_compat_tables),
     Migration(name="0005_users_identity_integrity", upgrade=_upgrade_users_identity_integrity),
+    Migration(name="0006_add_expires_at_column", upgrade=_add_expires_at_column),
 ]
 
 

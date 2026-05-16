@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import logging
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, Request
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from app.services.auth_session import (
 from app.services.admin_state import get_recent_chat_logs
 from app.services.crypto import decrypt_secret
 from app.services.user_api_keys import mask_key
+from app.limiter import login_limiter
 
 router = APIRouter()
 logger = logging.getLogger("prguard")
@@ -123,11 +124,15 @@ def _as_utc(dt: datetime | None) -> datetime | None:
 
 @router.post("/login")
 async def admin_login(
+    request: Request,
     payload: AdminLoginPayload,
     response: Response,
     admin_token: str | None = Cookie(default=None, alias=ADMIN_SESSION_COOKIE_NAME),
     db: AsyncSession = Depends(get_db),
 ):
+    # Enforce per-IP rate limiting
+    login_limiter.check(request.client.host)
+
     user = await authenticate_admin_credentials(db, email=payload.email, password=payload.password)
 
     prior_session_user = await get_user_from_admin_session(db, admin_token)

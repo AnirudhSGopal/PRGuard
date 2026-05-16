@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import ConfigDict, model_validator
 from pydantic_settings import BaseSettings
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -50,6 +51,7 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = ""
     ADMIN_PASSWORD: str = ""
     ADMIN_SESSION_TTL_SECONDS: int = 60 * 60 * 12
+    SENTRY_DSN: Optional[str] = None
 
     # ── LLM Unified Config ──
     MODEL_PROVIDER: str = "gemini" 

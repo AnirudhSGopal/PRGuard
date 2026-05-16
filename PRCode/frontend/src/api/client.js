@@ -130,7 +130,7 @@ export const sendMessage = async (message, repo, issueNumber, history = [], opti
   const provider = normalizeProvider(options.provider || getScopedProvider())
 
   try {
-    console.log('[Chat API] Sending request', { repo, provider, historyLength: history.length })
+    if (import.meta.env.DEV) console.log('[Chat API] Sending request', { repo, provider, historyLength: history.length })
     const res = await client.post('/api/chat', {
       message,
       repo,
@@ -149,10 +149,10 @@ export const sendMessage = async (message, repo, issueNumber, history = [], opti
       message: payload.message || payload.answer,
       answer: payload.answer || payload.message,
     }
-    console.log('[Chat API] Response received', normalized)
+    if (import.meta.env.DEV) console.log('[Chat API] Response received', normalized)
     return normalized
   } catch (err) {
-    console.error('[Chat API] Error:', err)
+    if (import.meta.env.DEV) console.error('[Chat API] Error:', err)
     if (err?.code === 'ERR_CANCELED') {
       throw new Error('Request canceled by user.')
     }
@@ -278,19 +278,27 @@ export const getIndexStatus = async (repo) => {
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-export const getMe = async () => {
-  try {
-    const res = await client.get('/auth/me', {
-      // Unauthenticated is an expected state during bootstrap.
-      validateStatus: (status) => status === 200 || status === 401,
-    })
-    if (res.status === 401) {
-      return null
-    }
-    return res.data
-  } catch {
-    return null
+let getMePromise = null
+export const getMe = () => {
+  if (!getMePromise) {
+    getMePromise = (async () => {
+      try {
+        const res = await client.get('/auth/me', {
+          // Unauthenticated is an expected state during bootstrap.
+          validateStatus: (status) => status === 200 || status === 401,
+        })
+        if (res.status === 401) {
+          return null
+        }
+        return res.data
+      } catch {
+        return null
+      } finally {
+        getMePromise = null
+      }
+    })()
   }
+  return getMePromise
 }
 
 export const logout = async () => {
@@ -326,14 +334,26 @@ export const adminLogout = async () => {
   }
 }
 
-export const getAdminMe = async () => {
-  const res = await client.get('/admin/me', {
-    validateStatus: (status) => status === 200 || status === 401 || status === 403,
-  })
-  if (res.status !== 200) {
-    return null
+let getAdminMePromise = null
+export const getAdminMe = () => {
+  if (!getAdminMePromise) {
+    getAdminMePromise = (async () => {
+      try {
+        const res = await client.get('/admin/me', {
+          validateStatus: (status) => status === 200 || status === 401 || status === 403,
+        })
+        if (res.status !== 200) {
+          return null
+        }
+        return res.data
+      } catch {
+        return null
+      } finally {
+        getAdminMePromise = null
+      }
+    })()
   }
-  return res.data
+  return getAdminMePromise
 }
 
 export const getAdminUsers = async (params = {}) => {

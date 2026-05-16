@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 
 from fastapi import HTTPException, Response
@@ -123,7 +123,11 @@ def _clear_cookie(response: Response, cookie_name: str) -> None:
 def issue_user_session(user: User, response: Response) -> str:
     session_token = create_session_token()
     user.session_token_hash = hash_session_token(session_token)
-    user.last_login_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    user.last_login_at = now
+    # Set session expiry to 12 hours from now
+    user.expires_at = now + timedelta(hours=12)
+    
     _set_cookie(response, USER_SESSION_COOKIE_NAME, session_token)
     logger.info("user_session_issued user_id=%s auth_provider=%s", user.id, user.auth_provider)
     return session_token
@@ -132,7 +136,11 @@ def issue_user_session(user: User, response: Response) -> str:
 def issue_admin_session(user: User, response: Response) -> str:
     session_token = create_session_token()
     user.session_token_hash = hash_session_token(session_token)
-    user.last_login_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    user.last_login_at = now
+    # Set session expiry to 12 hours from now
+    user.expires_at = now + timedelta(hours=12)
+    
     _set_cookie(response, ADMIN_SESSION_COOKIE_NAME, session_token)
     logger.info("admin_session_issued user_id=%s auth_provider=%s", user.id, user.auth_provider)
     return session_token

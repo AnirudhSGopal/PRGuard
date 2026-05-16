@@ -52,38 +52,49 @@ def decode_oauth_state(state: str) -> dict:
 
 def create_github_oauth_url(frontend_origin: str = "") -> str:
     """Generate the GitHub OAuth authorization URL."""
-    # 🔗 Ensure we point back to the backend's callback URL
-    # URL encode the redirect_uri to prevent it from breaking the URL structure
     if not (settings.APP_URL or "").strip():
         raise ValueError("APP_URL must be configured for GitHub OAuth callback routing.")
-    encoded_redirect = quote(f"{settings.APP_URL}/auth/github/callback")
-    state = quote(encode_oauth_state(frontend_origin))
     
-    params = (
-        f"client_id={settings.GITHUB_CLIENT_ID}"
-        f"&scope=repo,read:user,user:email"
-        f"&allow_signup=true"
-        f"&redirect_uri={encoded_redirect}"
-        f"&state={state}"
-    )
-    return f"https://github.com/login/oauth/authorize?{params}"
+    from urllib.parse import urlencode
+    
+    # Ensure redirect_uri is exactly what's registered in GitHub
+    redirect_uri = f"{settings.APP_URL}/auth/github/callback"
+    state = encode_oauth_state(frontend_origin)
+    
+    params = {
+        "client_id": settings.GITHUB_CLIENT_ID,
+        "scope": "repo,read:user,user:email",
+        "allow_signup": "true",
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    
+    query_string = urlencode(params)
+    return f"https://github.com/login/oauth/authorize?{query_string}"
 
 
 async def exchange_code_for_token(code: str) -> str | None:
     """Exchange OAuth code for a GitHub access token."""
 
     async with httpx.AsyncClient(timeout=settings.HTTP_TIMEOUT) as client:
+        # Per GitHub spec, if redirect_uri was provided in the authorize step,
+        # it must be provided here and match exactly.
+        payload = {
+            "client_id":     settings.GITHUB_CLIENT_ID,
+            "client_secret": settings.GITHUB_CLIENT_SECRET,
+            "code":          code,
+        }
+        
+        if (settings.APP_URL or "").strip():
+            payload["redirect_uri"] = f"{settings.APP_URL}/auth/github/callback"
+
         resp = await client.post(
             "https://github.com/login/oauth/access_token",
             headers={
                 "Accept":     "application/json",
                 "User-Agent": "PRGuard-Assistant",
             },
-            json={
-                "client_id":     settings.GITHUB_CLIENT_ID,
-                "client_secret": settings.GITHUB_CLIENT_SECRET,
-                "code":          code,
-            },
+            json=payload,
         )
 
     data = resp.json()
