@@ -31,9 +31,9 @@ export default function Callback() {
     const decodeSessionParam = (value) => {
       if (!value) return null
       try {
-        let normalized = value.replace(/ /g, '+')
-        normalized = normalized.replace(/-/g, '+').replace(/_/g, '/')
+        let normalized = value.replace(/-/g, '+').replace(/_/g, '/')
         const padding = normalized.length % 4
+        if (padding === 1) return null
         if (padding) normalized += '='.repeat(4 - padding)
         return JSON.parse(atob(normalized))
       } catch {
