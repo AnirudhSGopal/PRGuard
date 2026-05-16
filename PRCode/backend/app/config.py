@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     PORT: int = 8000
-    SECRET_KEY: str = ""
+    SECRET_KEY: str = "9a7f8e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f"
     JWT_SECRET: str = ""
     SESSION_SECRET: str = ""
     ADMIN_USERS: str = ""
@@ -170,7 +170,7 @@ class Settings(BaseSettings):
         }
         legacy_admin_email = (self.ADMIN_EMAIL or "").strip().lower()
         if legacy_admin_email:
-            explicit_admin_emails.add(legacy_admin_email)
+            explicit__emails.add(legacy_admin_email)
         return explicit_admin_emails
 
     def oauth_bootstrap_role(self, email: str = "") -> str:

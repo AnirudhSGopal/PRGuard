@@ -20,6 +20,8 @@ from app.models.base import ping_database
 
 # ✅ CORS middleware FIRST (executes LAST in the chain)
 allow_origins = settings.cors_origins()
+if "https://repolearner.vercel.app" not in allow_origins:
+    allow_origins.append("https://repolearner.vercel.app")
 
 cors_kwargs = {
     "allow_origins": allow_origins,
