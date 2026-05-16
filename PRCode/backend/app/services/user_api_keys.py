@@ -60,7 +60,6 @@ async def set_active_provider(db: AsyncSession, user_id: str, provider: str) -> 
             row.is_active = False
     if not has_requested:
         raise HTTPException(status_code=404, detail=f"No API key configured for provider '{normalized}'.")
-    await db.flush()
 
 async def upsert_user_api_key(
     db: AsyncSession,
@@ -141,7 +140,6 @@ async def delete_user_api_key(db: AsyncSession, *, user_id: str, provider: str) 
         if remaining:
             remaining[0].is_active = True
     
-    await db.flush()
     return True
 
 async def list_user_key_statuses(db: AsyncSession, *, user_id: str) -> dict:
