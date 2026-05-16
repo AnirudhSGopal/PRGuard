@@ -1,7 +1,6 @@
 import hashlib
-
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import UserApiKey
@@ -9,20 +8,17 @@ from app.services.crypto import decrypt_secret, encrypt_secret
 
 ALLOWED_PROVIDERS = {"claude", "gpt", "gemini"}
 
-
 def normalize_provider(provider: str | None) -> str:
     normalized = (provider or "").strip().lower()
     if normalized == "gpt4o":
         normalized = "gpt"
     return normalized
 
-
 def validate_provider_or_400(provider: str | None) -> str:
     normalized = normalize_provider(provider)
     if normalized not in ALLOWED_PROVIDERS:
         raise HTTPException(status_code=400, detail="Invalid provider. Use: claude, gpt, or gemini.")
     return normalized
-
 
 def _validate_key_format(provider: str, api_key: str) -> None:
     key = (api_key or "").strip()
@@ -36,7 +32,6 @@ def _validate_key_format(provider: str, api_key: str) -> None:
     if provider == "gemini" and not key.startswith("AIza"):
         raise HTTPException(status_code=400, detail="Gemini API key must start with AIza.")
 
-
 def mask_key(api_key: str) -> str:
     value = (api_key or "").strip()
     if not value:
@@ -45,20 +40,13 @@ def mask_key(api_key: str) -> str:
         return "*" * len(value)
     return f"{value[:4]}...{value[-4:]}"
 
-
 def key_fingerprint(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
 
-
 async def get_user_key_rows(db: AsyncSession, user_id: str) -> list[UserApiKey]:
-    stmt = (
-        select(UserApiKey)
-        .where(UserApiKey.user_id == user_id)
-        .order_by(UserApiKey.created_at.desc(), UserApiKey.id.desc())
-    )
+    stmt = select(UserApiKey).where(UserApiKey.user_id == user_id).order_by(UserApiKey.created_at.desc(), UserApiKey.id.desc())
     result = await db.execute(stmt)
     return list(result.scalars().all())
-
 
 async def set_active_provider(db: AsyncSession, user_id: str, provider: str) -> None:
     normalized = validate_provider_or_400(provider)
@@ -70,11 +58,9 @@ async def set_active_provider(db: AsyncSession, user_id: str, provider: str) -> 
             row.is_active = True
         else:
             row.is_active = False
-        await db.merge(row)
     if not has_requested:
         raise HTTPException(status_code=404, detail=f"No API key configured for provider '{normalized}'.")
     await db.commit()
-
 
 async def upsert_user_api_key(
     db: AsyncSession,
@@ -88,43 +74,45 @@ async def upsert_user_api_key(
     key_value = (api_key or "").strip()
     _validate_key_format(normalized, key_value)
 
-    stmt = select(UserApiKey).where(
-        UserApiKey.user_id == user_id,
-        UserApiKey.provider == normalized,
-    )
-    result = await db.execute(stmt)
-    row = result.scalar_one_or_none()
     encrypted = encrypt_secret(key_value)
     fingerprint = key_fingerprint(key_value)
 
-    if row:
-        row.encrypted_api_key = encrypted
-        row.key_fingerprint = fingerprint
-        row.is_active = make_active
-        await db.merge(row)
-    else:
-        row = UserApiKey(
-            user_id=user_id,
-            provider=normalized,
-            encrypted_api_key=encrypted,
-            key_fingerprint=fingerprint,
-            is_active=make_active,
-        )
-        db.add(row)
+    async with db.begin():
+        if make_active:
+            # Deactivate all other keys for this user
+            other_keys_stmt = select(UserApiKey).where(
+                UserApiKey.user_id == user_id, 
+                UserApiKey.provider != normalized
+            )
+            other_keys_result = await db.execute(other_keys_stmt)
+            for item in other_keys_result.scalars().all():
+                item.is_active = False
 
-    if make_active:
-        other_stmt = select(UserApiKey).where(
+        # Find existing key
+        stmt = select(UserApiKey).where(
             UserApiKey.user_id == user_id,
-            UserApiKey.provider != normalized,
+            UserApiKey.provider == normalized,
         )
-        other_rows = (await db.execute(other_stmt)).scalars().all()
-        for item in other_rows:
-            item.is_active = False
-            await db.merge(item)
+        result = await db.execute(stmt)
+        row = result.scalar_one_or_none()
 
-    # ✅ FIX: Commit the changes to the database.
-    # This was the root cause of the API key not saving.
-    await db.commit()
+        if row:
+            # Update existing row
+            row.encrypted_api_key = encrypted
+            row.key_fingerprint = fingerprint
+            row.is_active = make_active
+        else:
+            # Create new row
+            row = UserApiKey(
+                user_id=user_id,
+                provider=normalized,
+                encrypted_api_key=encrypted,
+                key_fingerprint=fingerprint,
+                is_active=make_active,
+            )
+            db.add(row)
+        
+        # The `async with db.begin()` block handles the commit.
 
     return {
         "provider": normalized,
@@ -133,30 +121,26 @@ async def upsert_user_api_key(
         "fingerprint": fingerprint,
     }
 
-
 async def delete_user_api_key(db: AsyncSession, *, user_id: str, provider: str) -> bool:
     normalized = validate_provider_or_400(provider)
-    stmt = select(UserApiKey).where(
-        UserApiKey.user_id == user_id,
-        UserApiKey.provider == normalized,
-    )
-    result = await db.execute(stmt)
-    row = result.scalar_one_or_none()
-    if not row:
-        return False
+    async with db.begin():
+        stmt = select(UserApiKey).where(
+            UserApiKey.user_id == user_id,
+            UserApiKey.provider == normalized,
+        )
+        result = await db.execute(stmt)
+        row = result.scalar_one_or_none()
+        if not row:
+            return False
 
-    was_active = bool(row.is_active)
-    await db.delete(row)
-    await db.flush()
+        was_active = bool(row.is_active)
+        await db.delete(row)
 
-    if was_active:
-        remaining = await get_user_key_rows(db, user_id)
-        if remaining:
-            remaining[0].is_active = True
-
-    await db.commit()
+        if was_active:
+            remaining = await get_user_key_rows(db, user_id)
+            if remaining:
+                remaining[0].is_active = True
     return True
-
 
 async def list_user_key_statuses(db: AsyncSession, *, user_id: str) -> dict:
     rows = await get_user_key_rows(db, user_id)
@@ -190,7 +174,6 @@ async def list_user_key_statuses(db: AsyncSession, *, user_id: str) -> dict:
         "active_provider": active_provider,
         "has_any_key": any(item["has_key"] for item in items),
     }
-
 
 async def resolve_user_provider_key(
     db: AsyncSession,
