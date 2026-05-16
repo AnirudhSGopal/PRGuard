@@ -28,28 +28,11 @@ export default function Callback() {
       return () => { if (timerId) clearTimeout(timerId) }
     }
 
-    const decodeSessionParam = (value) => {
-      if (!value) return null
-      try {
-        const decodedValue = decodeURIComponent(value)
-        let normalized = decodedValue.replace(/-/g, '+').replace(/_/g, '/')
-        const padding = normalized.length % 4
-        if (padding === 1) return null
-        if (padding) normalized += '='.repeat(4 - padding)
-        const bytes = Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0))
-        const jsonText = new TextDecoder().decode(bytes)
-        return JSON.parse(jsonText)
-      } catch {
-        return null
-      }
-    }
-
     const resolveSession = async () => {
       if (sessionParam) {
         try {
-          const decoded = decodeSessionParam(sessionParam)
-          const userId = decoded?.user_id ?? decoded?.userId ?? decoded?.id
-          if (decoded?.role === 'user' && userId) {
+          const decoded = JSON.parse(atob(sessionParam))
+          if (decoded?.role === 'user' && decoded?.user_id) {
             // ✅ Store session so useSession can read it
             localStorage.setItem('prguard_session', JSON.stringify(decoded))
             setStatus('Login successful! Redirecting...')
