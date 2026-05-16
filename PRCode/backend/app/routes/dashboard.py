@@ -59,7 +59,8 @@ async def get_user_api_keys(
 ):
     user = current_user
     record_user_activity(user_id=user.id, username=user.username)
-    return await list_user_key_statuses(db, user_id=user.id)
+    async with db.begin():
+        return await list_user_key_statuses(db, user_id=user.id)
 
 
 @router.put("/api-keys/{provider}")
@@ -71,13 +72,14 @@ async def save_user_api_key(
 ):
     user = current_user
     normalized_provider = validate_provider_or_400(provider)
-    result = await upsert_user_api_key(
-        db,
-        user_id=user.id,
-        provider=normalized_provider,
-        api_key=payload.api_key,
-        make_active=payload.make_active,
-    )
+    async with db.begin():
+        result = await upsert_user_api_key(
+            db,
+            user_id=user.id,
+            provider=normalized_provider,
+            api_key=payload.api_key,
+            make_active=payload.make_active,
+        )
     record_user_activity(user_id=user.id, username=user.username)
     record_api_key_status(
         user_id=user.id,
@@ -97,7 +99,8 @@ async def set_user_active_provider(
 ):
     user = current_user
     normalized_provider = validate_provider_or_400(provider)
-    await set_active_provider(db, user.id, normalized_provider)
+    async with db.begin():
+        await set_active_provider(db, user.id, normalized_provider)
     record_user_activity(user_id=user.id, username=user.username)
     return {"active_provider": normalized_provider}
 
@@ -110,7 +113,8 @@ async def remove_user_api_key(
 ):
     user = current_user
     normalized_provider = validate_provider_or_400(provider)
-    deleted = await delete_user_api_key(db, user_id=user.id, provider=normalized_provider)
+    async with db.begin():
+        deleted = await delete_user_api_key(db, user_id=user.id, provider=normalized_provider)
     record_user_activity(user_id=user.id, username=user.username)
     record_api_key_status(
         user_id=user.id,
@@ -196,22 +200,21 @@ async def connect_repo(
     Explicitly connect a repository to the account.
     """
     user = current_user
+    async with db.begin():
+        stmt = select(ConnectedRepository).where(
+            ConnectedRepository.user_id == user.id,
+            ConnectedRepository.github_repo_id == repo_id,
+        )
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            return {"status": "already_connected", "repo_name": repo_name}
 
-    stmt = select(ConnectedRepository).where(
-        ConnectedRepository.user_id == user.id,
-        ConnectedRepository.github_repo_id == repo_id,
-    )
-    result = await db.execute(stmt)
-    if result.scalar_one_or_none():
-        return {"status": "already_connected", "repo_name": repo_name}
-
-    new_conn = ConnectedRepository(
-        user_id=user.id,
-        github_repo_id=repo_id,
-        repo_name=repo_name,
-    )
-    db.add(new_conn)
-    await db.commit()
+        new_conn = ConnectedRepository(
+            user_id=user.id,
+            github_repo_id=repo_id,
+            repo_name=repo_name,
+        )
+        db.add(new_conn)
     return {"status": "connected", "repo_name": repo_name}
 
 
@@ -225,16 +228,15 @@ async def disconnect_repo(
     Disconnect a repository from the account.
     """
     user = current_user
+    async with db.begin():
+        stmt = delete(ConnectedRepository).where(
+            ConnectedRepository.user_id == user.id,
+            ConnectedRepository.github_repo_id == repo_id,
+        )
+        result = await db.execute(stmt)
+        if not result.rowcount:
+            return {"status": "not_found"}
 
-    stmt = delete(ConnectedRepository).where(
-        ConnectedRepository.user_id == user.id,
-        ConnectedRepository.github_repo_id == repo_id,
-    )
-    result = await db.execute(stmt)
-    if not result.rowcount:
-        return {"status": "not_found"}
-
-    await db.commit()
     return {"status": "disconnected"}
 
 
@@ -320,26 +322,26 @@ async def toggle_working_on_issue(
     db: AsyncSession = Depends(get_db),
 ):
     """Toggle the 'working on' status for a specific issue."""
-    stmt = select(WorkingOnIssue).where(
-        WorkingOnIssue.user_id == current_user.id,
-        WorkingOnIssue.repo_name == payload.repo,
-        WorkingOnIssue.issue_number == issue_number,
-    )
-    result = await db.execute(stmt)
-    existing = result.scalar_one_or_none()
-
-    if existing:
-        existing.active = payload.active
-    else:
-        new_entry = WorkingOnIssue(
-            user_id=current_user.id,
-            repo_name=payload.repo,
-            issue_number=issue_number,
-            active=payload.active,
+    async with db.begin():
+        stmt = select(WorkingOnIssue).where(
+            WorkingOnIssue.user_id == current_user.id,
+            WorkingOnIssue.repo_name == payload.repo,
+            WorkingOnIssue.issue_number == issue_number,
         )
-        db.add(new_entry)
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
 
-    await db.commit()
+        if existing:
+            existing.active = payload.active
+        else:
+            new_entry = WorkingOnIssue(
+                user_id=current_user.id,
+                repo_name=payload.repo,
+                issue_number=issue_number,
+                active=payload.active,
+            )
+            db.add(new_entry)
+
     return {"status": "ok", "active": payload.active}
 
 
