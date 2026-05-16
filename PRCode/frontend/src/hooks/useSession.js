@@ -3,19 +3,7 @@ import { getAdminMe, getMe } from '../api/client'
 
 export const useSession = () => {
   const [loading, setLoading] = useState(true)
-  const [sessionRole, setSessionRole] = useState(() => {
-    // ✅ Read localStorage immediately on init before any API call
-    try {
-      const stored = localStorage.getItem('prguard_session')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        if (parsed?.role === 'user' && parsed?.user_id) return 'user'
-      }
-    } catch {}
-    return null
-  })
-  const [sessionUser, setSessionUser] = useState(() => {
-    // ✅ Read localStorage immediately on init before any API call
+  const [session, setSession] = useState(() => {
     try {
       const stored = localStorage.getItem('prguard_session')
       if (stored) return JSON.parse(stored)
@@ -32,56 +20,36 @@ export const useSession = () => {
         if (!active) return
 
         if (userSession?.authenticated && userSession?.role === 'user') {
-          // Preserve token if it exists in localStorage but backend /me omitted it
-          try {
-            const stored = localStorage.getItem('prguard_session')
-            if (stored) {
-              const parsed = JSON.parse(stored)
-              if (parsed?.token && !userSession.token) {
-                userSession.token = parsed.token
-              }
-              if (parsed?.gh_token && !userSession.gh_token) {
-                userSession.gh_token = parsed.gh_token
-              }
-              if (parsed?.github_token && !userSession.github_token) {
-                userSession.github_token = parsed.github_token
-              }
-            }
-          } catch {}
-          localStorage.setItem('prguard_session', JSON.stringify(userSession))
-          setSessionRole('user')
-          setSessionUser(userSession)
+          const currentSession = session
+          const merged = { ...userSession }
+          if (currentSession?.token && !merged.token) merged.token = currentSession.token
+          if (currentSession?.gh_token && !merged.gh_token) merged.gh_token = currentSession.gh_token
+          if (currentSession?.github_token && !merged.github_token) merged.github_token = currentSession.github_token
+          
+          localStorage.setItem('prguard_session', JSON.stringify(merged))
+          setSession(merged)
           return
         }
 
-        if (adminSession?.role === 'admin') {
+        if (adminSession?.authenticated && adminSession?.role === 'admin') {
+          const currentSession = session
+          const merged = { ...adminSession }
+          if (currentSession?.token && !merged.token) merged.token = currentSession.token
+
+          localStorage.setItem('prguard_session', JSON.stringify(merged))
+          setSession(merged)
+          return
+        }
+
+        // If backend says unauthenticated, clear any stale session
+        if (session) {
           localStorage.removeItem('prguard_session')
-          setSessionRole('admin')
-          setSessionUser(adminSession)
-          return
+          setSession(null)
         }
 
-        // Cookie failed — keep localStorage session if it exists
-        const stored = localStorage.getItem('prguard_session')
-        if (stored) {
-          try {
-            const parsed = JSON.parse(stored)
-            if (parsed?.role === 'user' && parsed?.user_id) {
-              setSessionRole('user')
-              setSessionUser(parsed)
-              return
-            }
-          } catch {
-            localStorage.removeItem('prguard_session')
-          }
-        }
-
-        // Truly unauthenticated
-        setSessionRole(null)
-        setSessionUser(null)
-
-      } catch {
-        // On error keep whatever state we have from localStorage
+      } catch (err) {
+        // On API error, trust localStorage session if it exists
+        console.warn('[useSession] API error during session load:', err)
       }
     }
 
@@ -92,8 +60,7 @@ export const useSession = () => {
     const handleExpiry = () => {
       if (!active) return
       localStorage.removeItem('prguard_session')
-      setSessionRole(null)
-      setSessionUser(null)
+      setSession(null)
       setLoading(false)
     }
 
@@ -104,12 +71,16 @@ export const useSession = () => {
     }
   }, [])
 
+  const role = session?.role || null
+
   return {
     loading,
-    sessionRole,
-    sessionUser,
-    isAuthenticated: sessionRole !== null,
-    isAdmin: sessionRole === 'admin',
-    isUser: sessionRole === 'user',
+    sessionRole: role,
+    sessionUser: session,
+    isAuthenticated: role !== null,
+    isAdmin: role === 'admin',
+    isUser: role === 'user',
+    session,
+    setSession,
   }
 }

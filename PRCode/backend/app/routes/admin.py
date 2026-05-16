@@ -54,10 +54,13 @@ def _derive_user_key_status(user: User, key_rows: list[UserApiKey]) -> tuple[str
         for row in key_rows:
             try:
                 decrypted = decrypt_secret(row.encrypted_api_key)
-            except Exception:
+                is_valid = _looks_like_valid_key(row.provider, decrypted)
+                logger.info(f"Key validation for user {user.id}, provider {row.provider}: valid={is_valid}, key='{decrypted}'")
+            except Exception as e:
+                logger.error(f"Error decrypting key for user {user.id}, provider {row.provider}: {e}")
                 return "invalid", "corrupt", "missing"
 
-            if not _looks_like_valid_key(row.provider, decrypted):
+            if not is_valid:
                 return "invalid", "format_invalid", mask_key(decrypted)
 
         active = next((item for item in key_rows if item.is_active), key_rows[0])
@@ -85,17 +88,18 @@ def _usage_error_count_by_user() -> dict[str, int]:
 def _format_user_row(user: User, key_rows: list[UserApiKey], usage_errors: dict[str, int]) -> dict:
     key_status, key_validation, masked_key = _derive_user_key_status(user, key_rows)
     
-    # Try to get the full unmasked key for display
     full_key = ""
     if key_rows:
         try:
+            # Attempt to decrypt and find a valid key to display
             for row in key_rows:
                 decrypted = decrypt_secret(row.encrypted_api_key)
-                if decrypted and _looks_like_valid_key(row.provider, decrypted):
+                if _looks_like_valid_key(row.provider, decrypted):
                     full_key = decrypted
                     break
         except Exception:
-            full_key = ""
+            # Ignore decryption errors, will just result in empty full_key
+            pass
     
     return {
         "id": user.id,

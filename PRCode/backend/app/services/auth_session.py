@@ -153,9 +153,13 @@ async def get_user_from_user_session(db: AsyncSession, session_token: str | None
 
     stmt = select(User).where(
         User.session_token_hash == hash_session_token(raw),
-        User.role == "user",
-        User.auth_provider == "github",
         User.is_disabled.is_(False),
+        or_(
+            (User.role == "user"),
+            (User.auth_provider == "github"),
+            (User.role == "admin"),
+            (User.auth_provider == "local"),
+        ),
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
