@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     PORT: int = 8000
-    SECRET_KEY: str = "9a7f8e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f"
+    SECRET_KEY: str = ""
     JWT_SECRET: str = ""
     SESSION_SECRET: str = ""
     ADMIN_USERS: str = ""
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD: str = ""
     ADMIN_SESSION_TTL_SECONDS: int = 60 * 60 * 12
 
-    # ── LLM Unified Config ──
+    # â”€â”€ LLM Unified Config â”€â”€
     MODEL_PROVIDER: str = "gemini" 
     MODEL_NAME: str = "gemini-2.5-flash"
     CHAT_ENABLE_RAG: bool = False
@@ -132,7 +132,7 @@ class Settings(BaseSettings):
         port = f":{parsed.port}" if parsed.port else ""
         username = f"{parsed.username}@" if parsed.username else ""
         netloc = f"{username}{host}{port}"
-        return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+        return urlunsplit((scheme, netloc, parsed.path, "", ""))
 
     def validate_secret_key(self) -> None:
         insecure_defaults = {"changeme", "changeme123"}
@@ -151,8 +151,9 @@ class Settings(BaseSettings):
         if self.is_development():
             if self.APP_URL:
                 defaults.append(self.APP_URL)
-
+        
         origins = [origin for origin in configured + defaults if origin]
+        origins.append("https://repolearner.vercel.app")
         return list(dict.fromkeys(origins))
 
     def admin_users_set(self) -> set[str]:
@@ -170,7 +171,7 @@ class Settings(BaseSettings):
         }
         legacy_admin_email = (self.ADMIN_EMAIL or "").strip().lower()
         if legacy_admin_email:
-            explicit__emails.add(legacy_admin_email)
+            explicit_admin_emails.add(legacy_admin_email)
         return explicit_admin_emails
 
     def oauth_bootstrap_role(self, email: str = "") -> str:
@@ -185,11 +186,11 @@ class Settings(BaseSettings):
         if role_normalized == "admin":
             return True
 
-        login_normalized = (login or "").strip().lower()
+        login_linked = (login or "").strip().lower()
         email_normalized = (email or "").strip().lower()
         admin_email = (self.ADMIN_EMAIL or "").strip().lower()
 
-        if login_normalized and login_normalized in self.admin_users_set():
+        if login_linked and login_linked in self.admin_users_set():
             return True
         if admin_email and email_normalized and admin_email == email_normalized:
             return True
