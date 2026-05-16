@@ -253,35 +253,28 @@ export default function Dashboard() {
     return () => window.removeEventListener('prguard:openConnect', handler)
   }, [])
 
-  // ✅ FIX 1: Removed key.includes('...') — blocked valid keys like AIza... and sk-ant-...
-  // ✅ FIX 2: Explicitly call setActiveProvider after save (some backends ignore make_active on PUT)
-  // ✅ FIX 3: Delayed second refresh catches async backend activation
   const handleApiSave = async (providerId) => {
     const key = apiKeys[providerId]
     if (!key || key.trim() === '') return
 
-    // Only block if user typed the placeholder text exactly unchanged.
-    if (['sk-ant-...', 'sk-...', 'AIza...'].includes(key.trim())) return
+    if (['sk-ant-...' , 'sk-...', 'AIza...'].includes(key.trim())) return
 
     try {
       await saveApiKey(providerId, key.trim(), true)
 
-      // Clear input immediately
       setApiKeys(prev => ({ ...prev, [providerId]: '' }))
 
-      // Explicitly activate — backend may not honour make_active on PUT
       try {
         await setActiveProvider(providerId)
-      } catch {
-        // Non-fatal: key saved, activation endpoint may vary
-      }
+      } catch {}
 
-      // Refresh now + after short delay for async backends
-      await refreshApiStatus()
-      setTimeout(() => refreshApiStatus(), 800)
-
-      // Notify ChatPanel model picker + status bar immediately
-      window.dispatchEvent(new CustomEvent('prguard:api-keys-updated'))
+      // ✅ FIX: Wait for backend to process, then refresh and notify.
+      // This prevents a race condition where the frontend would fetch the
+      // old key status before the new one was saved.
+      setTimeout(() => {
+        refreshApiStatus()
+        window.dispatchEvent(new CustomEvent('prguard:api-keys-updated'))
+      }, 800)
 
       setSavedKeys(prev => ({ ...prev, [providerId]: true }))
       setTimeout(() => setSavedKeys(prev => ({ ...prev, [providerId]: false })), 1500)

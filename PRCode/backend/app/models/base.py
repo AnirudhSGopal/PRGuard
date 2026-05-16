@@ -28,8 +28,6 @@ def _build_engine():
         connect_args: dict[str, object] = {
             "timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
             "command_timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
-            "statement_cache_size": 0,
-            "prepared_statement_cache_size": 0,
         }
         engine_kwargs.update(
             {
@@ -40,11 +38,11 @@ def _build_engine():
 
     engine = create_async_engine(database_url, **engine_kwargs)
 
-    # Force statement_cache_size=0 at the asyncpg driver level on every connection
+    # Force statement_cache_size=0 at the asyncpg driver level on every connection.
+    # This is required for compatibility with PgBouncer in transaction pooling mode.
     @event.listens_for(engine.sync_engine, "do_connect")
     def force_no_prepare(dialect, conn_rec, cargs, cparams):
         cparams["statement_cache_size"] = 0
-        cparams["prepared_statement_cache_size"] = 0
 
     return engine
 
