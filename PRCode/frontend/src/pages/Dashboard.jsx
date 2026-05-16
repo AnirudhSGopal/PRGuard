@@ -106,7 +106,6 @@ export default function Dashboard() {
     }
     read()
     window.addEventListener('storage', read)
-    // ✅ FIX: also listen to custom event so status bar updates immediately after save
     window.addEventListener('prguard:api-keys-updated', read)
     const timer = setInterval(read, 1500)
     return () => {
@@ -207,13 +206,15 @@ export default function Dashboard() {
   const [apiPanelOpen, setApiPanelOpen] = useState(false)
   const [apiKeys,      setApiKeys]      = useState({ claude: '', gpt: '', gemini: '' })
   const [showKeys,     setShowKeys]     = useState({ claude: false, gpt: false, gemini: false })
-  const [savedKeys,    setSavedKeys]    = useState({ claude: false, gpt: false, gemini: false })
+  const [saving,       setSaving]       = useState({ claude: false, gpt: false, gemini: false })
   const [connected,    setConnected]    = useState({ claude: false, gpt: false, gemini: false })
   const [activeId,     setActiveId]     = useState('claude')
 
   const refreshApiStatus = useCallback(async () => {
+    console.log('[API] Refreshing API key status...')
     try {
       const status = await getApiKeyStatus()
+      console.log('[API] Received status:', status)
       const nextConnected = { claude: false, gpt: false, gemini: false }
       ;(status.items || []).forEach((item) => {
         if (item?.provider && Object.prototype.hasOwnProperty.call(nextConnected, item.provider)) {
@@ -226,8 +227,11 @@ export default function Dashboard() {
       setScopedProvider(active)
       setProviderLabel(PROVIDER_NAMES[active] ?? active)
       setApiPanelError('')
+      console.log('[API] Refresh complete.')
     } catch (err) {
-      setApiPanelError(err?.response?.data?.detail || err?.message || 'Failed to load API key status')
+      const errorMsg = err?.response?.data?.detail || err?.message || 'Failed to load API key status'
+      setApiPanelError(errorMsg)
+      console.error('[API] Refresh failed:', errorMsg)
     }
   }, [])
 
@@ -255,31 +259,29 @@ export default function Dashboard() {
 
   const handleApiSave = async (providerId) => {
     const key = apiKeys[providerId]
-    if (!key || key.trim() === '') return
+    if (!key || key.trim() === '' || saving[providerId]) return
 
     if (['sk-ant-...' , 'sk-...', 'AIza...'].includes(key.trim())) return
 
+    setSaving(prev => ({ ...prev, [providerId]: true }))
+    setApiPanelError('')
+    console.log(`[API] Saving key for ${providerId}...`)
+
     try {
       await saveApiKey(providerId, key.trim(), true)
-
+      console.log(`[API] Successfully saved key for ${providerId}.`)
       setApiKeys(prev => ({ ...prev, [providerId]: '' }))
 
-      try {
-        await setActiveProvider(providerId)
-      } catch {}
-
-      // ✅ FIX: Wait for backend to process, then refresh and notify.
-      // This prevents a race condition where the frontend would fetch the
-      // old key status before the new one was saved.
-      setTimeout(() => {
-        refreshApiStatus()
-        window.dispatchEvent(new CustomEvent('prguard:api-keys-updated'))
-      }, 800)
-
-      setSavedKeys(prev => ({ ...prev, [providerId]: true }))
-      setTimeout(() => setSavedKeys(prev => ({ ...prev, [providerId]: false })), 1500)
+      await refreshApiStatus()
+      window.dispatchEvent(new CustomEvent('prguard:api-keys-updated'))
+      console.log('[API] Dispatched api-keys-updated event.')
+      
     } catch (err) {
-      setApiPanelError(err?.response?.data?.detail || err?.message || 'Failed to save API key')
+      const errorMsg = err?.response?.data?.detail || err?.message || 'Failed to save API key'
+      setApiPanelError(errorMsg)
+      console.error(`[API] Failed to save key for ${providerId}:`, errorMsg)
+    } finally {
+      setSaving(prev => ({ ...prev, [providerId]: false }))
     }
   }
 
@@ -452,9 +454,9 @@ export default function Dashboard() {
                           <EyeIcon open={showKeys[provider.id]} />
                         </button>
                       </div>
-                      <button onClick={() => handleApiSave(provider.id)} disabled={!apiKeys[provider.id]}
-                        style={{ padding: '4px 10px', fontSize: 10, fontWeight: 500, borderRadius: 4, flexShrink: 0, transition: 'all 0.15s', cursor: apiKeys[provider.id] ? 'pointer' : 'not-allowed', border: `1px solid ${savedKeys[provider.id] ? '#22c55e' : apiKeys[provider.id] ? t.accent : panelBord}`, background: savedKeys[provider.id] ? '#22c55e22' : apiKeys[provider.id] ? t.accentBg : inputBg, color: savedKeys[provider.id] ? '#22c55e' : apiKeys[provider.id] ? t.accentFg : mutedText }}>
-                        {savedKeys[provider.id] ? '✓' : connected[provider.id] ? 'Update' : 'Save'}
+                      <button onClick={() => handleApiSave(provider.id)} disabled={!apiKeys[provider.id] || saving[provider.id]}
+                        style={{ padding: '4px 10px', fontSize: 10, fontWeight: 500, borderRadius: 4, flexShrink: 0, transition: 'all 0.15s', cursor: (apiKeys[provider.id] && !saving[provider.id]) ? 'pointer' : 'not-allowed', border: `1px solid ${apiKeys[provider.id] ? t.accent : panelBord}`, background: apiKeys[provider.id] ? t.accentBg : inputBg, color: apiKeys[provider.id] ? t.accentFg : mutedText, minWidth: 50 }}>
+                        {saving[provider.id] ? 'Saving...' : connected[provider.id] ? 'Update' : 'Save'}
                       </button>
                       <button onClick={() => handleSetActiveProvider(provider.id)} disabled={!connected[provider.id]}
                         style={{ padding: '4px 8px', fontSize: 10, borderRadius: 4, border: `1px solid ${panelBord}`, background: activeId === provider.id ? '#22c55e22' : inputBg, color: activeId === provider.id ? '#22c55e' : mutedText, cursor: connected[provider.id] ? 'pointer' : 'not-allowed' }}>
