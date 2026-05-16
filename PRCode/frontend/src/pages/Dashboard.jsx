@@ -9,9 +9,9 @@ import ChatPanel, { ConnectRepoModal } from '../components/ChatPanel'
 import { useRepos, useIssues, useFiles } from '../hooks/useReviews'
 import {
   deleteApiKey,
-  getApiKeyStatus,
+  getUserProfile,
   getScopedProvider,
-  saveApiKey,
+  saveUserApiKey,
   setActiveProvider,
   setScopedProvider,
 } from '../api/client'
@@ -107,11 +107,9 @@ export default function Dashboard() {
     read()
     window.addEventListener('storage', read)
     window.addEventListener('prguard:api-keys-updated', read)
-    const timer = setInterval(read, 1500)
     return () => {
       window.removeEventListener('storage', read)
       window.removeEventListener('prguard:api-keys-updated', read)
-      clearInterval(timer)
     }
   }, [])
 
@@ -213,7 +211,8 @@ export default function Dashboard() {
   const refreshApiStatus = useCallback(async () => {
     console.log('[API] Refreshing API key status...')
     try {
-      const status = await getApiKeyStatus()
+      const profile = await getUserProfile()
+      const status = profile.api_key_status
       console.log('[API] Received status:', status)
       const nextConnected = { claude: false, gpt: false, gemini: false }
       ;(status.items || []).forEach((item) => {
@@ -235,11 +234,8 @@ export default function Dashboard() {
     }
   }, [])
 
-  useEffect(() => { refreshApiStatus() }, [refreshApiStatus])
-
   useEffect(() => {
     if (apiPanelOpen) {
-      setApiKeys({ claude: '', gpt: '', gemini: '' })
       refreshApiStatus()
     }
   }, [apiPanelOpen, refreshApiStatus])
@@ -268,14 +264,14 @@ export default function Dashboard() {
     console.log(`[API] Saving key for ${providerId}...`)
 
     try {
-      await saveApiKey(providerId, key.trim(), true)
+      await saveUserApiKey(providerId, key.trim(), true)
       console.log(`[API] Successfully saved key for ${providerId}.`)
       setApiKeys(prev => ({ ...prev, [providerId]: '' }))
 
       await refreshApiStatus()
       window.dispatchEvent(new CustomEvent('prguard:api-keys-updated'))
       console.log('[API] Dispatched api-keys-updated event.')
-      
+
     } catch (err) {
       const errorMsg = err?.response?.data?.detail || err?.message || 'Failed to save API key'
       setApiPanelError(errorMsg)
