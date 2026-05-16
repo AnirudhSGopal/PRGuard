@@ -31,11 +31,14 @@ export default function Callback() {
     const decodeSessionParam = (value) => {
       if (!value) return null
       try {
-        let normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+        const decodedValue = decodeURIComponent(value)
+        let normalized = decodedValue.replace(/-/g, '+').replace(/_/g, '/')
         const padding = normalized.length % 4
         if (padding === 1) return null
         if (padding) normalized += '='.repeat(4 - padding)
-        return JSON.parse(atob(normalized))
+        const bytes = Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0))
+        const jsonText = new TextDecoder().decode(bytes)
+        return JSON.parse(jsonText)
       } catch {
         return null
       }
@@ -45,7 +48,8 @@ export default function Callback() {
       if (sessionParam) {
         try {
           const decoded = decodeSessionParam(sessionParam)
-          if (decoded?.role === 'user' && decoded?.user_id) {
+          const userId = decoded?.user_id ?? decoded?.userId ?? decoded?.id
+          if (decoded?.role === 'user' && userId) {
             // ✅ Store session so useSession can read it
             localStorage.setItem('prguard_session', JSON.stringify(decoded))
             setStatus('Login successful! Redirecting...')
