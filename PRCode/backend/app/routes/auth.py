@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -280,8 +280,9 @@ async def github_callback(
     db_user.last_login_at = datetime.now(timezone.utc)
 
     session_payload = _build_session_payload(db_user, session_token, access_token)
-    encoded = base64.b64encode(json.dumps(session_payload).encode()).decode()
-    callback_target = f"{frontend_url}/auth/callback?session={encoded}"
+    payload_json = json.dumps(session_payload, separators=(",", ":")).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(payload_json).decode("utf-8").rstrip("=")
+    callback_target = f"{frontend_url}/auth/callback?session={quote(encoded, safe='')}"
     response = _build_redirect_page(callback_target, "Signing in, please wait...")
 
     is_prod = settings.ENVIRONMENT == "production"
