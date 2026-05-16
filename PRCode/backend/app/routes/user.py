@@ -30,6 +30,8 @@ async def save_authenticated_user_api_key(
         api_key=payload.api_key,
         make_active=payload.make_active,
     )
+    await db.commit()
+    await db.refresh(result)
     record_user_activity(user_id=current_user.id, username=current_user.username)
     record_api_key_status(
         user_id=current_user.id,
