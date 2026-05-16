@@ -280,7 +280,7 @@ async def github_callback(
     db_user.last_login_at = datetime.now(timezone.utc)
 
     session_payload = _build_session_payload(db_user, session_token, access_token)
-    encoded = base64.b64encode(json.dumps(session_payload).encode()).decode()
+    encoded = base64.urlsafe_b64encode(json.dumps(session_payload).encode()).decode()
     callback_target = f"{frontend_url}/auth/callback?session={encoded}"
     response = _build_redirect_page(callback_target, "Signing in, please wait...")
 

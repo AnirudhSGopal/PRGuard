@@ -28,10 +28,23 @@ export default function Callback() {
       return () => { if (timerId) clearTimeout(timerId) }
     }
 
+    const decodeSessionParam = (value) => {
+      if (!value) return null
+      try {
+        let normalized = value.replace(/ /g, '+')
+        normalized = normalized.replace(/-/g, '+').replace(/_/g, '/')
+        const padding = normalized.length % 4
+        if (padding) normalized += '='.repeat(4 - padding)
+        return JSON.parse(atob(normalized))
+      } catch {
+        return null
+      }
+    }
+
     const resolveSession = async () => {
       if (sessionParam) {
         try {
-          const decoded = JSON.parse(atob(sessionParam))
+          const decoded = decodeSessionParam(sessionParam)
           if (decoded?.role === 'user' && decoded?.user_id) {
             // ✅ Store session so useSession can read it
             localStorage.setItem('prguard_session', JSON.stringify(decoded))
