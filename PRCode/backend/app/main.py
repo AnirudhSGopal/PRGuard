@@ -18,10 +18,7 @@ from app.models.base import AsyncSessionLocal
 from app.services.admin_bootstrap import ensure_default_admin
 from app.models.base import ping_database
 
-app.add_middleware(BaseHTTPMiddleware, dispatch=log_request_middleware)
-app.add_middleware(GlobalHardenMiddleware)
-app.add_middleware(AdminRoleMiddleware)
-
+# ✅ CORS middleware FIRST (executes LAST in the chain)
 allow_origins = settings.cors_origins()
 
 cors_kwargs = {
@@ -35,6 +32,11 @@ if settings.is_development():
     cors_kwargs["allow_origin_regex"] = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 app.add_middleware(CORSMiddleware, **cors_kwargs)
+
+# Custom middleware (executes before CORS)
+app.add_middleware(BaseHTTPMiddleware, dispatch=log_request_middleware)
+app.add_middleware(GlobalHardenMiddleware)
+app.add_middleware(AdminRoleMiddleware)
 
 app.include_router(webhook.router, prefix="/webhook", tags=["webhook"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
