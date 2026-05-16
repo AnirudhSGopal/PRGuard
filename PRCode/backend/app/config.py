@@ -132,7 +132,7 @@ class Settings(BaseSettings):
         port = f":{parsed.port}" if parsed.port else ""
         username = f"{parsed.username}@" if parsed.username else ""
         netloc = f"{username}{host}{port}"
-        return urlunsplit((scheme, netloc, parsed.path, "", ""))
+        return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
     def validate_secret_key(self) -> None:
         insecure_defaults = {"changeme", "changeme123"}
