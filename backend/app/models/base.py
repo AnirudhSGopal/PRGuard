@@ -28,20 +28,27 @@ def _build_engine():
         engine_kwargs["connect_args"] = {"check_same_thread": False}
         engine_kwargs["poolclass"] = NullPool
     else:
-        is_neon = "neon.tech" in database_url.lower()
+        is_supabase_pooler = "pooler.supabase.com" in database_url.lower()
         connect_args: dict[str, object] = {
             "timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
             "command_timeout": max(int(settings.DB_CONNECT_TIMEOUT), 1),
         }
 
-        if is_neon:
-            # Neon pooler works best with asyncpg statement cache disabled.
+        if is_supabase_pooler:
+            # Supavisor in transaction mode does NOT support prepared
+            # statements (same constraint as PgBouncer). Disable asyncpg's
+            # statement cache to avoid extra round-trips and silent failures.
             connect_args["statement_cache_size"] = 0
+
+        # When using an external pooler (Supabase Supavisor), keep the
+        # local pool small — Supavisor handles connection multiplexing.
+        pool_size = 2 if is_supabase_pooler else max(int(settings.DB_POOL_SIZE), 1)
+        max_overflow = 3 if is_supabase_pooler else max(int(settings.DB_MAX_OVERFLOW), 0)
 
         engine_kwargs.update(
             {
-                "pool_size": max(int(settings.DB_POOL_SIZE), 1),
-                "max_overflow": max(int(settings.DB_MAX_OVERFLOW), 0),
+                "pool_size": pool_size,
+                "max_overflow": max_overflow,
                 "pool_timeout": max(int(settings.DB_POOL_TIMEOUT), 1),
                 "pool_recycle": max(int(settings.DB_POOL_RECYCLE), 0),
                 "pool_use_lifo": True,

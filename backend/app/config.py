@@ -106,7 +106,7 @@ class Settings(BaseSettings):
             normalized_query.append((key, val))
 
         hostname = (parsed.hostname or "").lower()
-        if scheme == "postgresql+asyncpg" and "neon.tech" in hostname and not has_ssl:
+        if scheme == "postgresql+asyncpg" and "supabase.com" in hostname and not has_ssl:
             normalized_query.append(("ssl", "require"))
 
         query = urlencode(normalized_query, doseq=True)

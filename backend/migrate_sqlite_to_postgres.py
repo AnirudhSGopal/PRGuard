@@ -3,7 +3,7 @@
 SQLite → PostgreSQL Data Migration Script for PRGuard
 
 Usage:
-    1. Set up .env with your Neon PostgreSQL connection string
+    1. Set up .env with your Supabase PostgreSQL connection string
     2. Run: python migrate_sqlite_to_postgres.py
     
 This script:
@@ -38,7 +38,7 @@ async def migrate_data():
     # Check that we're actually using PostgreSQL
     if settings.DATABASE_URL.startswith("sqlite"):
         print("❌ ERROR: DATABASE_URL is still SQLite!")
-        print("   Please update .env with your Neon PostgreSQL URL first.")
+        print("   Please update .env with your Supabase PostgreSQL URL first.")
         print("   Example: DATABASE_URL=postgresql+asyncpg://user:pass@host/db")
         return False
     

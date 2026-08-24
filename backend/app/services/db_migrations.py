@@ -168,7 +168,7 @@ async def _upgrade_indexes(conn: AsyncConnection) -> None:
         await conn.execute(text(statement))
 
 
-async def _upgrade_neon_compat_tables(conn: AsyncConnection) -> None:
+async def _upgrade_postgres_compat_tables(conn: AsyncConnection) -> None:
     dialect = conn.dialect.name
     bool_type = "BOOLEAN" if dialect != "sqlite" else "BOOLEAN"
     timestamp_type = "TIMESTAMPTZ" if dialect != "sqlite" else "TIMESTAMP"
@@ -612,7 +612,7 @@ MIGRATIONS: list[Migration] = [
     Migration(name="0001_users_schema_sync", upgrade=_upgrade_users_schema),
     Migration(name="0002_indexes", upgrade=_upgrade_indexes),
     Migration(name="0003_auth_provider_split", upgrade=_upgrade_users_schema),
-    Migration(name="0004_neon_compat_tables", upgrade=_upgrade_neon_compat_tables),
+    Migration(name="0004_neon_compat_tables", upgrade=_upgrade_postgres_compat_tables),
     Migration(name="0005_users_identity_integrity", upgrade=_upgrade_users_identity_integrity),
 ]
 

@@ -9,5 +9,5 @@ class ConnectedRepository(Base):
     id:             Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id:        Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
     github_repo_id: Mapped[str] = mapped_column(String, index=True)
-    repo_name:      Mapped[str] = mapped_column(String)
+    repo_name:      Mapped[str] = mapped_column(String, index=True)
     connected_at:   Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
