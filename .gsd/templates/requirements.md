@@ -53,11 +53,11 @@ Requirements derived from SPEC.md for traceability and coverage tracking.
 
 ## Traceability Matrix
 
-| Requirement | Plans | Summary Evidence | Tests | Verification Artifact | Status |
-|-------------|-------|------------------|-------|------------------------|--------|
-| REQ-01 | 1.1, 1.2 | 1-1-SUMMARY.md | TC-01 | phases/1/VERIFICATION.md | — |
-| REQ-02 | 1.2 | 1-2-SUMMARY.md | TC-02, TC-03 | phases/1/VERIFICATION.md | — |
-| REQ-03 | 2.1 | 2-1-SUMMARY.md | TC-04 | phases/2/VERIFICATION.md | — |
+| Requirement | Plans | Tests | Status |
+|-------------|-------|-------|--------|
+| REQ-01 | 1.1, 1.2 | TC-01 | — |
+| REQ-02 | 1.2 | TC-02, TC-03 | — |
+| REQ-03 | 2.1 | TC-04 | — |
 
 ---
 

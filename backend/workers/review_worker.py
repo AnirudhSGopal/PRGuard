@@ -1,170 +1,170 @@
-import asyncio
+"""
+Background task workers for PR review and repository indexing.
+These functions create their own DB sessions and are safe to run
+as fire-and-forget asyncio tasks.
+"""
+
 import logging
-from app.services.github import fetch_all_files, fetch_issue
-from app.services.rag import index_repo, retrieve, format_chunks_for_prompt
-from app.services.llm import generate, handle_llm_error
-from app.services.diff_parser import parse_diff
 
-logger = logging.getLogger("prguard")
+from app.models.base import AsyncSessionLocal
+from app.services import rag, github
+from app.services import llm
+from app.services.diff_parser import parse_diff, format_diff_for_prompt
+from app.models.review import Review
+from app.models.webhook import WebhookEvent
 
+logger = logging.getLogger(__name__)
 
-# ── Index repo worker ─────────────────────────────────────────────────────────
+# In-memory job status tracking for background indexing jobs.
+_job_status: dict[str, dict] = {}
 
-async def run_index_repo(repo: str, token: str = None, token_ref: str = None) -> dict:
-    """
-    Inline request-time function for indexing a repo.
-
-    Flow:
-    1. Fetch all files from GitHub
-    2. Chunk + embed + store in PostgreSQL pgvector
-    3. Return stats
-    """
-    try:
-        if not token:
-            raise ValueError("Missing indexing token")
-        # fetch all files from GitHub
-        files = await fetch_all_files(repo=repo, token=token)
-
-        if not files:
-            return {
-                "status":  "failed",
-                "repo":    repo,
-                "error":   "No files found in repo",
-                "indexed": False,
-            }
-
-        # index into PostgreSQL pgvector
-        stats = await index_repo(repo=repo, files=files)
-
-        return {
-            "status":  "completed",
-            "repo":    repo,
-            "files":   stats["files"],
-            "chunks":  stats["chunks"],
-            "indexed": True,
-        }
-
-    except Exception as e:
-        return {
-            "status":  "failed",
-            "repo":    repo,
-            "error":   str(e),
-            "indexed": False,
-        }
-
-
-# ── PR review worker ──────────────────────────────────────────────────────────
 
 async def run_pr_review(
-    repo:      str,
+    repo: str,
     pr_number: int,
-    token:     str = None,
-    provider:  str = "claude",
-    api_key:   str = None,
-    token_ref: str = None,
-    api_key_ref: str = None,
-) -> dict:
+    token: str,
+    provider: str = "claude",
+    api_key: str = "",
+) -> None:
     """
-    Inline request-time function for reviewing a PR.
+    Perform an AI-powered review of a GitHub Pull Request.
 
-    Flow:
-    1. Fetch PR diff from GitHub
-    2. Parse diff into changed files + lines
-    3. Retrieve relevant chunks from PostgreSQL pgvector
-    4. Send diff + chunks to LLM for review
-    5. Post review comment back to GitHub PR
+    Steps:
+    1. Fetch the PR diff from GitHub
+    2. Parse the diff into structured data
+    3. Generate an AI review using the LLM service
+    4. Post the review comment back to the GitHub PR
+    5. Save the review result to the database
     """
+    db = AsyncSessionLocal()
     try:
-        from app.services.github import fetch_pr_diff, post_pr_comment
-        if not token or not api_key:
-            return {"status": "failed", "error": "Missing token or API key"}
+        logger.info(f"[PR_REVIEW] Starting review for {repo} PR #{pr_number}")
 
-        # fetch the PR diff
-        diff_text = await fetch_pr_diff(repo=repo, pr_number=pr_number, token=token)
-
+        # 1. Fetch PR diff from GitHub
+        diff_text = await github.fetch_pr_diff(repo, pr_number, token)
         if not diff_text:
-            return {
-                "status": "failed",
-                "error":  "Could not fetch PR diff",
-            }
+            logger.warning(f"[PR_REVIEW] No diff found for {repo} PR #{pr_number}")
+            return
 
-        # parse diff into structured format
-        parsed = parse_diff(diff_text)
+        # 2. Parse the diff
+        parsed_diff = parse_diff(diff_text)
+        diff_prompt = format_diff_for_prompt(parsed_diff)
 
-        # build question from complete file chunks without cutting file entries mid-block
-        changed_files = [f["path"] for f in parsed["files"]]
-        max_diff_chars = 3000
-        diff_parts = []
-        used_chars = 0
-        for file in parsed["files"]:
-            file_block = f"\n--- {file['path']} [{file['status']}] ---\n"
-            for hunk in file.get("hunks", []):
-                file_block += f"@@ {hunk.get('header', '')} @@\n"
-                for line in hunk.get("lines", []):
-                    prefix = {"added": "+", "removed": "-", "context": " "}.get(line.get("type"), " ")
-                    file_block += f"{prefix} {line.get('content', '')}\n"
-            remaining_chars = max_diff_chars - used_chars
-            if remaining_chars <= 0:
-                break
-
-            if len(file_block) > remaining_chars:
-                # Ensure we always include at least a truncated portion of the first file.
-                if used_chars == 0:
-                    marker = "\n...[Diff truncated due to prompt size limit]...\n"
-                    slice_len = max(0, remaining_chars - len(marker))
-                    truncated_block = file_block[:slice_len] + marker
-                    diff_parts.append(truncated_block)
-                break
-
-            diff_parts.append(file_block)
-            used_chars += len(file_block)
-        diff_text_for_prompt = "".join(diff_parts)
-
-        if not diff_text_for_prompt.strip() or len(diff_text_for_prompt.strip()) < 80:
-            logger.warning(
-                "[PR_REVIEW] diff_text_for_prompt is empty or very small (chars=%s, files=%s)",
-                len(diff_text_for_prompt),
-                len(parsed.get("files", [])),
-            )
-
-        question = (
-            f"Review these changes in PR #{pr_number}:\n"
-            f"Files changed: {', '.join(changed_files)}\n\n"
-            f"Diff:\n{diff_text_for_prompt}"
+        # 3. Generate AI review
+        review_prompt = (
+            f"Review this pull request diff for repository {repo} "
+            f"(PR #{pr_number}).\n\n"
+            f"Analyze the changes for:\n"
+            f"- Bugs and potential issues\n"
+            f"- Security vulnerabilities\n"
+            f"- Code quality and best practices\n"
+            f"- Performance concerns\n\n"
+            f"Diff:\n{diff_prompt}"
         )
 
-        # generate review using LLM + RAG
-        result = await generate(
-            question=question,
+        result = await llm.generate(
+            question=review_prompt,
             repo=repo,
             history=[],
             provider=provider,
             api_key=api_key,
-            n_chunks=6,
+            n_chunks=0,  # No RAG for PR reviews — we use the diff directly
         )
 
-        # post review comment to GitHub PR
-        comment_body = (
-            f"## PRGuard AI Review\n\n"
-            f"{result['answer']}\n\n"
-            f"---\n"
-            f"*Reviewed by PRGuard using {provider}*"
+        review_text = result.get("answer", "") if result else ""
+        if not review_text:
+            logger.warning(f"[PR_REVIEW] LLM returned empty review for {repo} PR #{pr_number}")
+            return
+
+        # 4. Post review comment back to GitHub PR
+        posted = await github.post_pr_comment(
+            repo=repo,
+            pr_number=pr_number,
+            body=f"## 🛡️ PRGuard AI Review\n\n{review_text}",
+            token=token,
         )
 
-        await post_pr_comment(repo=repo, pr_number=pr_number, body=comment_body, token=token)
+        if posted:
+            logger.info(f"[PR_REVIEW] Review posted for {repo} PR #{pr_number}")
+        else:
+            logger.warning(f"[PR_REVIEW] Failed to post review comment for {repo} PR #{pr_number}")
 
-        return {
-            "status":   "completed",
-            "repo":     repo,
-            "pr":       pr_number,
-            "provider": provider,
-            "chunks":   result["chunks"],
-        }
+        # 5. Save review result to database
+        review = Review(
+            user_id="system",
+            repo_name=repo,
+            issue_number=pr_number,
+            issue_title=f"PR #{pr_number}",
+            answer=review_text,
+            fix=None,
+            chunks_used=None,
+        )
+        db.add(review)
+        await db.commit()
+        logger.info(f"[PR_REVIEW] Review saved to database for {repo} PR #{pr_number}")
 
     except Exception as e:
-        return {
-            "status": "failed",
-            "repo":   repo,
-            "pr":     pr_number,
-            "error":  str(e),
-        }
+        logger.error(f"[PR_REVIEW] Failed to review {repo} PR #{pr_number}: {e}", exc_info=True)
+    finally:
+        await db.close()
+
+
+async def run_index_repo(
+    repo: str,
+    token: str,
+    job_id: str | None = None,
+) -> None:
+    """
+    Index a repository's source code into the vector store for RAG.
+
+    Steps:
+    1. Fetch all source files from GitHub
+    2. Index them into pgvector using the RAG service
+    3. Update job status if job_id is provided
+    """
+    db = AsyncSessionLocal()
+    try:
+        logger.info(f"[INDEX] Starting indexing for {repo} (job_id={job_id})")
+
+        if job_id:
+            _job_status[job_id] = {"status": "processing", "repo": repo}
+
+        # 1. Fetch all files from GitHub
+        files = await github.fetch_all_files(repo=repo, token=token)
+        if not files:
+            logger.warning(f"[INDEX] No source files found in {repo}")
+            if job_id:
+                _job_status[job_id] = {
+                    "status": "completed",
+                    "repo": repo,
+                    "files": 0,
+                    "chunks": 0,
+                }
+            return
+
+        # 2. Index into vector store
+        result = await rag.index_repo(repo=repo, files=files)
+
+        logger.info(
+            f"[INDEX] Indexing complete for {repo}: "
+            f"{result.get('files', 0)} files, {result.get('chunks', 0)} chunks"
+        )
+
+        if job_id:
+            _job_status[job_id] = {
+                "status": "completed",
+                "repo": repo,
+                "files": result.get("files", 0),
+                "chunks": result.get("chunks", 0),
+            }
+
+    except Exception as e:
+        logger.error(f"[INDEX] Failed to index {repo}: {e}", exc_info=True)
+        if job_id:
+            _job_status[job_id] = {
+                "status": "failed",
+                "repo": repo,
+                "error": str(e),
+            }
+    finally:
+        await db.close()

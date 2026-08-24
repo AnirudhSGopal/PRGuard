@@ -153,7 +153,7 @@ async def get_user_from_user_session(db: AsyncSession, session_token: str | None
 
     stmt = select(User).where(
         User.session_token_hash == hash_session_token(raw),
-        User.role == "user",
+        User.role.in_(["user", "admin"]),
         User.auth_provider == "github",
         User.is_disabled.is_(False),
     )

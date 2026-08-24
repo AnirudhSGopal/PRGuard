@@ -34,20 +34,20 @@ export default defineConfig(({ command, mode }) => {
     return normalized.includes('localhost') || normalized.includes('127.0.0.1')
   }
 
-  if (command === 'build' && !apiBaseUrl) {
-    throw new Error('VITE_API_BASE_URL is required for production builds.')
-  }
-
-  if (command === 'build' && isLocalhostTarget(apiBaseUrl)) {
-    throw new Error('VITE_API_BASE_URL cannot point to localhost/127.0.0.1 for production builds.')
-  }
-
-  if (command === 'build' && !/^https?:\/\//i.test(apiBaseUrl)) {
-    throw new Error('VITE_API_BASE_URL must be an absolute URL (http:// or https://).')
-  }
-
-  if (command === 'build' && !githubClientId) {
-    throw new Error('VITE_GITHUB_CLIENT_ID is required for production builds.')
+  if (command === 'build') {
+    if (!apiBaseUrl || isLocalhostTarget(apiBaseUrl)) {
+      throw new Error(
+        'VITE_API_BASE_URL must be set to your deployed ' +
+        'backend URL for production build. ' +
+        'Current value: ' + apiBaseUrl
+      )
+    }
+    if (!/^https?:\/\//i.test(apiBaseUrl)) {
+      throw new Error('VITE_API_BASE_URL must be an absolute URL (http:// or https://).')
+    }
+    if (!githubClientId) {
+      throw new Error('VITE_GITHUB_CLIENT_ID is required for production builds.')
+    }
   }
 
   return {

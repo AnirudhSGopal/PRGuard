@@ -12,7 +12,7 @@
 | **List files** | `Get-ChildItem "*.md"` | `ls *.md` |
 | **List recursively** | `Get-ChildItem -Recurse` | `find . -type f` |
 | **Read file** | `Get-Content "file.md"` | `cat "file.md"` |
-| **Search in files** | `Get-ChildItem -Recurse -File \| Select-String -Pattern "TODO"` | `rg "TODO" .` |
+| **Search in files** | `Select-String -Path "**/*" -Pattern "TODO"` | `grep -r "TODO" .` |
 | **Count lines** | `(Get-Content file).Count` | `wc -l < file` |
 | **Copy files** | `Copy-Item -Recurse src dest` | `cp -r src dest` |
 | **Delete files** | `Remove-Item -Recurse -Force dir` | `rm -rf dir` |
@@ -33,7 +33,7 @@ git status --short
 **PowerShell:**
 ```powershell
 Get-ChildItem -Recurse -Directory | 
-    Where-Object { $_.FullName -notmatch "[\\/](node_modules|\.git)([\\/]|$)" }
+    Where-Object { $_.Name -notmatch "node_modules|\.git" }
 ```
 
 **Bash:**
@@ -76,12 +76,12 @@ ls .gsd/phases/1/*-PLAN.md 2>/dev/null
 
 **PowerShell:**
 ```powershell
-Get-ChildItem -Path "src" -Recurse -File | Select-String -Pattern "TODO|FIXME"
+Select-String -Path "src/**/*" -Pattern "TODO|FIXME"
 ```
 
 **Bash:**
 ```bash
-rg -n "TODO|FIXME" src/
+grep -rn "TODO\|FIXME" src/
 ```
 
 ---
@@ -91,9 +91,9 @@ rg -n "TODO|FIXME" src/
 Add this to workflows for cross-platform commands:
 
 ```markdown
-**Note:** Include both PowerShell and Bash variants in workflow docs for portability.
+**Note:** Commands shown are PowerShell. For Bash equivalents, see `.gsd/examples/cross-platform.md`
 ```
 
 ---
 
-*Reference for PowerShell and Bash users*
+*Reference for Linux/Mac users*

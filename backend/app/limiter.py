@@ -33,5 +33,6 @@ class SimpleLimiter:
             self.history[key].append(now)
 
 # Global instances
-chat_limiter = SimpleLimiter(requests_per_minute=12)  # 12 chat msgs per min
-index_limiter = SimpleLimiter(requests_per_minute=3)   # 3 index ops per min
+chat_limiter = SimpleLimiter(requests_per_minute=30)  # 30 chat msgs per min
+index_limiter = SimpleLimiter(requests_per_minute=10)  # 10 index ops per min
+

@@ -37,35 +37,6 @@ The verifier checks the CODEBASE, not SUMMARY claims.
 
 ## 1. Load Verification Context
 
-Validate requested phase exists before reading summaries:
-
-**PowerShell:**
-```powershell
-if (-not (Select-String -Path ".gsd/ROADMAP.md" -Pattern "Phase $ARGUMENTS:")) {
-  Write-Error "Phase $ARGUMENTS not found in .gsd/ROADMAP.md"
-  exit 1
-}
-
-$summaries = Get-ChildItem ".gsd/phases/$ARGUMENTS/*-SUMMARY.md" -ErrorAction SilentlyContinue
-if (-not $summaries) {
-  Write-Error "No SUMMARY.md files found for phase $ARGUMENTS. Run /execute $ARGUMENTS first."
-  exit 1
-}
-```
-
-**Bash:**
-```bash
-if ! grep -q "Phase $ARGUMENTS:" ".gsd/ROADMAP.md"; then
-  echo "Phase $ARGUMENTS not found in .gsd/ROADMAP.md" >&2
-  exit 1
-fi
-
-if ! ls ".gsd/phases/$ARGUMENTS"/*-SUMMARY.md >/dev/null 2>&1; then
-  echo "No SUMMARY.md files found for phase $ARGUMENTS. Run /execute $ARGUMENTS first." >&2
-  exit 1
-fi
-```
-
 Read:
 - Phase definition from `.gsd/ROADMAP.md`
 - Original requirements from `.gsd/SPEC.md`

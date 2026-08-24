@@ -13,7 +13,7 @@ Safely pause work with complete state preservation for session handoff.
 - Context getting heavy (many failed attempts)
 - Switching to a different task
 - Before taking a break
-- After 3 failed debugging attempts (repeated incorrect fixes, failure to reproduce, or regressions)
+- After 3+ debugging failures (Context Hygiene rule)
 </when_to_use>
 
 <process>
@@ -157,7 +157,7 @@ A fresh context often immediately sees solutions that a polluted context missed.
 
 ### Auto-Save Protocol
 
-1. **Detect** context health warning signals (context-health-monitor tracks repeated failed attempts, high retry churn, and token-pressure; see the skill README in your skills directory)
+1. **Detect** context health warning signals (see context-health-monitor skill)
 2. **Write** current state to `.gsd/STATE.md` immediately
 3. **Then** inform the user and recommend `/pause`
 4. If session terminates unexpectedly, state is already saved

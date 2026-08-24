@@ -55,6 +55,8 @@ def sync_users_table_schema(sync_conn) -> None:
         additions.append(("api_key", "TEXT"))
     if "access_token" not in columns:
         additions.append(("access_token", "TEXT"))
+    if "raw_github_token" not in columns:
+        additions.append(("raw_github_token", "TEXT"))
     if "session_token_hash" not in columns:
         additions.append(("session_token_hash", "VARCHAR(128)"))
     if "is_disabled" not in columns:
@@ -138,17 +140,22 @@ async def _upgrade_postgres_compat_tables(conn: AsyncConnection) -> None:
     await conn.execute(
         text(
             f"""
-            CREATE TABLE IF NOT EXISTS api_keys (
-                id VARCHAR(64) PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS user_api_keys (
+                id SERIAL PRIMARY KEY,
                 user_id VARCHAR NOT NULL,
                 provider VARCHAR(20) NOT NULL,
-                encrypted_key TEXT,
+                encrypted_api_key TEXT,
+                key_fingerprint VARCHAR(16),
                 is_active {bool_type} DEFAULT FALSE NOT NULL,
-                created_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP NOT NULL
+                created_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP NOT NULL
             )
             """
         )
     )
+    
+    # Add a migration step to DROP the legacy api_keys table if it exists
+    await conn.execute(text("DROP TABLE IF EXISTS api_keys"))
 
 
 def _assert_identifier(name: str) -> str:
@@ -377,12 +384,8 @@ def _merge_duplicate_users_sync(sync_conn) -> None:
                     {"keeper_id": keeper_id, "duplicate_id": duplicate_id},
                 )
 
-            if "api_keys" in tables:
-                _delete_user_id_update_conflicts_sync(sync_conn, inspector, "api_keys", keeper_id, duplicate_id)
-                sync_conn.execute(
-                    text("UPDATE api_keys SET user_id = :keeper_id WHERE user_id = :duplicate_id"),
-                    {"keeper_id": keeper_id, "duplicate_id": duplicate_id},
-                )
+            # Legacy api_keys table handled in migration 0004 drop step
+            pass
 
             sync_conn.execute(
                 text(
@@ -512,12 +515,20 @@ async def _upgrade_users_identity_integrity(conn: AsyncConnection) -> None:
     await conn.run_sync(_enforce_user_identity_constraints_sync)
 
 
+async def _upgrade_vector_dimension(conn: AsyncConnection) -> None:
+    # On sqlite, this will fail or do nothing safely, on pg it will alter the column if pgvector is enabled.
+    if conn.dialect.name in {"postgresql", "postgres"}:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.execute(text("ALTER TABLE code_chunks ALTER COLUMN embedding TYPE vector(1536)"))
+
 MIGRATIONS: list[Migration] = [
     Migration(name="0001_users_schema_sync", upgrade=_upgrade_users_schema),
     Migration(name="0002_indexes", upgrade=_upgrade_indexes),
     Migration(name="0003_auth_provider_split", upgrade=_upgrade_users_schema),
     Migration(name="0004_postgres_compat_tables", upgrade=_upgrade_postgres_compat_tables),
     Migration(name="0005_users_identity_integrity", upgrade=_upgrade_users_identity_integrity),
+    Migration(name="0006_vector_1536", upgrade=_upgrade_vector_dimension),
+    Migration(name="0007_users_raw_github_token", upgrade=_upgrade_users_schema),
 ]
 
 

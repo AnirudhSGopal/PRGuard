@@ -87,11 +87,6 @@ status: complete | partial | failed
 
 ## Guidelines
 
-**Placeholder conventions:**
-- `{N}` = phase number, `{M}` = plan number.
-- `{Plan Name}` should match the source PLAN title.
-- Keep timestamps in ISO-8601 format.
-
 **Create SUMMARY.md:**
 - After each plan completes
 - Before moving to next plan

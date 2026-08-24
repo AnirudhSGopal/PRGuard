@@ -1,6 +1,6 @@
 ---
 description: Deep technical research for a phase
-argument-hint: "<phase-number> [--level 0|1|2|3]"
+argument-hint: "<phase-number> [--level 1|2|3]"
 ---
 
 # /research-phase Workflow
@@ -128,8 +128,8 @@ researched_at: {date}
 ## 5. Commit Research
 
 ```powershell
-git add ".gsd/phases/$N/RESEARCH.md"
-git commit -m "docs(phase-$N): research complete"
+git add .gsd/phases/{N}/RESEARCH.md
+git commit -m "docs(phase-{N}): research complete"
 ```
 
 ---

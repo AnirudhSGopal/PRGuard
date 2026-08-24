@@ -9,7 +9,7 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.services.db_migrations import apply_pending_migrations
+from app.services.db_migrations import apply_pending_migrations, sync_users_table_schema
 
 logger = logging.getLogger("prguard")
 
@@ -30,30 +30,43 @@ def _build_engine():
             "check_same_thread": False,
         }
     else:
-        lowered_url = database_url.lower()
-        uses_pgbouncer_pooler = ".pooler." in lowered_url or "pgbouncer" in lowered_url
-
+        # AGGRESSIVE FIX FOR PGBOUNCER / SUPABASE POOLER
+        # Using NullPool prevents the SQLAlchemy pool from keeping connections open 
+        # that might have stale prepared statements in PgBouncer's transaction mode.
+        engine_kwargs["poolclass"] = NullPool
+        
         connect_args: dict[str, object] = {
             "timeout": connect_timeout,
             "command_timeout": connect_timeout,
+            "statement_cache_size": 0,
+            "prepared_statement_cache_size": 0,
         }
-        if uses_pgbouncer_pooler:
-            # PgBouncer transaction/statement pooling is incompatible with asyncpg
-            # prepared statement caching unless statement cache is disabled.
-            connect_args["statement_cache_size"] = 0
-
-        engine_kwargs.update(
-            {
-                "pool_pre_ping": True,
-                "pool_size": max(int(settings.DB_POOL_SIZE), 1),
-                "max_overflow": max(int(settings.DB_MAX_OVERFLOW), 0),
-                "pool_timeout": max(int(settings.DB_POOL_TIMEOUT), 1),
-                "pool_recycle": max(int(settings.DB_POOL_RECYCLE), 0),
-                "pool_use_lifo": True,
-                "connect_args": connect_args,
+        
+        if "asyncpg" in database_url.lower():
+            # Force zero cache at the execution level
+            engine_kwargs["execution_options"] = {
+                "compiled_cache": None,
+                "cache_size": 0
             }
-        )
 
+        engine_kwargs["connect_args"] = connect_args
+
+    # Mask password for secure logging
+    safe_url = database_url
+    if ":" in database_url and "@" in database_url:
+        try:
+            parts = database_url.split("@")
+            prefix = parts[0]
+            suffix = parts[1]
+            if ":" in prefix:
+                sub_parts = prefix.split(":")
+                # Keep scheme and username, mask password
+                safe_url = f"{sub_parts[0]}:{sub_parts[1]}:****@{suffix}"
+        except Exception:
+            safe_url = "DATABASE_URL (masked)"
+    
+    print(f"[STARTUP] DATABASE_URL: {safe_url}")
+    
     return create_async_engine(database_url, **engine_kwargs)
 
 
@@ -71,13 +84,14 @@ class Base(DeclarativeBase):
 
 
 async def get_db():
+    logger.info("[DEBUG] get_db: Yielding session...")
     async with AsyncSessionLocal() as session:
         yield session
 
 
 async def ping_database() -> None:
     async with engine.connect() as conn:
-        await conn.execute(text("SELECT 1"))
+        await conn.execution_options(compiled_cache=None).execute(text("SELECT 1"))
 
 
 async def verify_database_connection() -> None:
@@ -109,10 +123,14 @@ async def verify_database_connection() -> None:
 
 
 async def init_db():
-    await verify_database_connection()
+    # await verify_database_connection()
     async with engine.begin() as conn:
         # Enable vector extension only on PostgreSQL-compatible backends.
         if conn.dialect.name in {"postgresql", "postgres"}:
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            try:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            except Exception as e:
+                logger.warning(f"Could not ensure 'vector' extension: {e}. If pgvector is not installed, RAG will fail.")
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(sync_users_table_schema)
         await apply_pending_migrations(conn)

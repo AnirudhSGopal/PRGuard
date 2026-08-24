@@ -56,10 +56,6 @@ If user chooses Reinstall, continue to Step 2.
 
 ```bash
 git clone --depth 1 https://github.com/toonight/get-shit-done-for-antigravity.git .gsd-install-temp
-if [ $? -ne 0 ]; then
-    echo "Clone failed" >&2
-    exit 1
-fi
 ```
 
 ---
@@ -69,37 +65,35 @@ fi
 **PowerShell:**
 ```powershell
 # Core directories
-foreach ($dir in @(".agent", ".agents", ".gemini", ".gsd", "adapters", "docs", "scripts")) {
-    $src = ".gsd-install-temp/$dir"
-    if (Test-Path $src) {
-        Copy-Item -Recurse -Force $src ".\"
-    }
-}
+Copy-Item -Recurse ".gsd-install-temp\.agent" ".\"
+Copy-Item -Recurse ".gsd-install-temp\.agents" ".\"
+Copy-Item -Recurse ".gsd-install-temp\.gemini" ".\"
+Copy-Item -Recurse ".gsd-install-temp\.gsd" ".\"
+Copy-Item -Recurse ".gsd-install-temp\adapters" ".\"
+Copy-Item -Recurse ".gsd-install-temp\docs" ".\"
+Copy-Item -Recurse ".gsd-install-temp\scripts" ".\"
 
 # Root files
-foreach ($file in @("PROJECT_RULES.md", "GSD-STYLE.md", "model_capabilities.yaml")) {
-    $src = ".gsd-install-temp/$file"
-    if (Test-Path $src) {
-        Copy-Item -Force $src ".\"
-    }
-}
+Copy-Item -Force ".gsd-install-temp\PROJECT_RULES.md" ".\"
+Copy-Item -Force ".gsd-install-temp\GSD-STYLE.md" ".\"
+Copy-Item -Force ".gsd-install-temp\model_capabilities.yaml" ".\"
 ```
 
 **Bash:**
 ```bash
 # Core directories
-for dir in .agent .agents .gemini .gsd adapters docs scripts; do
-    if [ -d ".gsd-install-temp/$dir" ]; then
-        cp -r ".gsd-install-temp/$dir" ./
-    fi
-done
+cp -r .gsd-install-temp/.agent ./
+cp -r .gsd-install-temp/.agents ./
+cp -r .gsd-install-temp/.gemini ./
+cp -r .gsd-install-temp/.gsd ./
+cp -r .gsd-install-temp/adapters ./
+cp -r .gsd-install-temp/docs ./
+cp -r .gsd-install-temp/scripts ./
 
 # Root files
-for file in PROJECT_RULES.md GSD-STYLE.md model_capabilities.yaml; do
-    if [ -f ".gsd-install-temp/$file" ]; then
-        cp ".gsd-install-temp/$file" ./
-    fi
-done
+cp .gsd-install-temp/PROJECT_RULES.md ./
+cp .gsd-install-temp/GSD-STYLE.md ./
+cp .gsd-install-temp/model_capabilities.yaml ./
 ```
 
 ---
@@ -108,9 +102,7 @@ done
 
 **PowerShell:**
 ```powershell
-if (Test-Path ".gsd-install-temp") {
-    Remove-Item -Recurse -Force ".gsd-install-temp"
-}
+Remove-Item -Recurse -Force ".gsd-install-temp"
 ```
 
 **Bash:**

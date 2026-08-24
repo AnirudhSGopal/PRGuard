@@ -12,81 +12,52 @@ Display recent changes, new features, and improvements to GSD for Antigravity.
 
 ## 1. Read CHANGELOG.md
 
-**PowerShell:**
-```powershell
-if (-not (Test-Path "CHANGELOG.md")) {
-        Write-Error "CHANGELOG.md not found"
-        exit 1
-}
-
-$lines = Get-Content "CHANGELOG.md"
-$headerIndexes = for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match '^##\s+\[') { $i }
-}
-
-if ($headerIndexes.Count -eq 0) {
-        Write-Output "No version sections found in CHANGELOG.md"
-} else {
-        $maxSections = [Math]::Min(3, $headerIndexes.Count)
-        for ($section = 0; $section -lt $maxSections; $section++) {
-                $start = $headerIndexes[$section]
-                $end = if ($section + 1 -lt $headerIndexes.Count) { $headerIndexes[$section + 1] - 1 } else { $lines.Count - 1 }
-                $lines[$start..$end]
-                if ($section -lt $maxSections - 1) { "" }
-        }
-}
-```
-
-**Bash:**
 ```bash
-if [ ! -f "CHANGELOG.md" ]; then
-    echo "CHANGELOG.md not found" >&2
-    exit 1
-fi
-
-awk '
-    /^## \[/ {h[++n]=NR}
-    {line[NR]=$0}
-    END {
-        if (n==0) { print "No version sections found in CHANGELOG.md"; exit }
-        max=(n<3?n:3)
-        for (i=1; i<=max; i++) {
-            start=h[i]
-            end=(i< n ? h[i+1]-1 : NR)
-            for (j=start; j<=end; j++) print line[j]
-            if (i<max) print ""
-        }
-    }
-' CHANGELOG.md
+# Read the latest version section from CHANGELOG.md
+head -50 CHANGELOG.md
 ```
 
 ## 2. Display Recent Changes
 
-Display up to the latest 3 version sections from CHANGELOG.md:
+Display the latest version(s) from CHANGELOG.md:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  GSD ► WHAT'S NEW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-VERSION {latest-version} — {date}
-══════════════════════════════════════
+VERSION 1.2.0 — 2026-01-17
+══════════════════════════
 
-{Latest section content from CHANGELOG.md}
+🌍 CROSS-PLATFORM SUPPORT
 
-───────────────────────────────────────────────────────
-
-VERSION {previous-version} — {date}
-══════════════════════════════════════
-
-{Previous section content from CHANGELOG.md}
+• All 16 workflow files now have Bash equivalents
+• README with dual-syntax Getting Started
+• /web-search workflow for research
 
 ───────────────────────────────────────────────────────
 
-VERSION {third-version} — {date}
-══════════════════════════════════════
+VERSION 1.1.0 — 2026-01-17
+══════════════════════════
 
-{Third section content from CHANGELOG.md}
+📚 TEMPLATE PARITY & EXAMPLES
+
+• 14 new templates (DEBUG.md, UAT.md, etc.)
+• Examples directory with walkthroughs
+• /add-todo and /check-todos workflows
+• Cross-references between workflows
+
+───────────────────────────────────────────────────────
+
+VERSION 1.0.0 — 2026-01-17
+══════════════════════════
+
+🎉 INITIAL RELEASE
+
+Full port of GSD methodology to Google Antigravity.
+• 24 workflows, 8 skills, 14 templates
+• 4 core rules: Planning Lock, State Persistence,
+  Context Hygiene, Empirical Validation
 
 ───────────────────────────────────────────────────────
 

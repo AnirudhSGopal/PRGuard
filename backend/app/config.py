@@ -34,7 +34,6 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     LLM_API_KEY: str = ""
 
-    REDIS_URL: str = ""
 
     LANGCHAIN_API_KEY: str = ""
     LANGCHAIN_PROJECT: str = "prguard"
@@ -71,7 +70,9 @@ class Settings(BaseSettings):
 
     # ── LLM Unified Config ──
     MODEL_PROVIDER: str = "gemini" 
-    MODEL_NAME: str = "gemini-2.5-flash"
+    MODEL_NAME: str = "gemini-2.0-flash"
+    GEMINI_MODEL_NAME: str = "gemini-2.0-flash"
+    GEMINI_MODEL_FALLBACKS: str = ""
     CHAT_ENABLE_RAG: bool = False
     PRELOAD_RAG_ON_STARTUP: bool = False
 
@@ -91,6 +92,23 @@ class Settings(BaseSettings):
 
     def has_any_llm_key(self) -> bool:
         return any([self.ANTHROPIC_API_KEY, self.OPENAI_API_KEY, self.GEMINI_API_KEY, self.LLM_API_KEY])
+
+    def gemini_model_candidates(self, requested_model: str | None = None) -> list[str]:
+        candidates: list[str] = []
+
+        def add_candidate(value: str | None) -> None:
+            normalized = (value or "").strip()
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+
+        add_candidate(requested_model)
+        add_candidate(self.GEMINI_MODEL_NAME)
+        add_candidate(self.MODEL_NAME)
+
+        for fallback in (self.GEMINI_MODEL_FALLBACKS or "").split(","):
+            add_candidate(fallback)
+
+        return candidates
 
     @staticmethod
     def _is_placeholder(value: str) -> bool:
@@ -114,10 +132,11 @@ class Settings(BaseSettings):
     def validate_database_configuration(self):
         database_url = self.normalize_database_url((self.DATABASE_URL or "").strip())
         if not database_url:
-            if self.is_development():
+            if self.ENVIRONMENT == "development":
                 database_url = "sqlite+aiosqlite:///./prguard.db"
+                print("WARNING: Using SQLite fallback for development")
             else:
-                raise ValueError("DATABASE_URL must be set in the environment.")
+                raise ValueError("DATABASE_URL is required in production environment.")
         self.DATABASE_URL = database_url
 
         if self.is_development():
@@ -142,11 +161,11 @@ class Settings(BaseSettings):
             else:
                 self.GEMINI_API_KEY = self.LLM_API_KEY.strip()
 
-        if not self.is_development():
+        if self.ENVIRONMENT == "production":
             for field_name in ("APP_URL", "FRONTEND_URL", "API_BASE_URL"):
                 raw_value = (getattr(self, field_name, "") or "").strip()
                 if raw_value and not raw_value.lower().startswith("https://"):
-                    raise ValueError(f"{field_name} must use HTTPS in non-development environments.")
+                    raise ValueError(f"{field_name} must use HTTPS in production environment.")
 
             required_fields = {
                 "APP_URL": self.APP_URL,
@@ -178,12 +197,11 @@ class Settings(BaseSettings):
                     (self.OPENAI_API_KEY or "").strip(),
                     (self.ANTHROPIC_API_KEY or "").strip(),
                     (self.GEMINI_API_KEY or "").strip(),
-                    (self.LLM_API_KEY or "").strip(),
                 ]
             ):
                 raise ValueError(
                     "At least one LLM API key must be configured in production "
-                    "(OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, or LLM_API_KEY)."
+                    "(OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY)."
                 )
 
             for url_field in ("APP_URL", "FRONTEND_URL", "API_BASE_URL"):

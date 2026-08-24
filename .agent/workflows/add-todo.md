@@ -33,8 +33,7 @@ Extract:
 
 ```powershell
 if (-not (Test-Path ".gsd/TODO.md")) {
-    New-Item -ItemType Directory -Path ".gsd" -Force | Out-Null
-    Set-Content -Path ".gsd/TODO.md" -Value "# TODO`n`n"
+    # Create with header
 }
 ```
 
@@ -45,7 +44,7 @@ if (-not (Test-Path ".gsd/TODO.md")) {
 Append to `.gsd/TODO.md`:
 
 ```markdown
-- [ ] {description} `{priority}` — {date: YYYY-MM-DD}
+- [ ] {description} `{priority}` — {date}
 ```
 
 ---

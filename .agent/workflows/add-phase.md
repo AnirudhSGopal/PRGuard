@@ -49,7 +49,7 @@ Append:
 ### Phase {N}: {name}
 **Status**: ⬜ Not Started
 **Objective**: {objective}
-**Depends on**: {if N == 1 -> None; if N > 1 -> Phase {N-1}}
+**Depends on**: Phase {N-1}
 
 **Tasks**:
 - [ ] TBD (run /plan {N} to create)
@@ -62,15 +62,7 @@ Append:
 
 ## 5. Update STATE.md
 
-Append a new dated entry at the end of STATE.md using the existing heading/style format:
-
-- Date header: `YYYY-MM-DD`
-- Title: `Phase {N} Added`
-- `Phase: {N} - {name}`
-- `Objective: {objective}`
-- `Status: Not Started`
-
-Replace placeholders `{N}`, `{name}`, and `{objective}` before writing.
+Note phase added.
 
 ---
 

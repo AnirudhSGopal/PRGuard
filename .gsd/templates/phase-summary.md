@@ -35,8 +35,8 @@
 
 | Hash | Message |
 |------|---------|
-| `{hash}` | feat(phase-N): {description} |
-| `{hash}` | feat(phase-N): {description} |
+| `abc123` | feat(phase-N): {description} |
+| `def456` | feat(phase-N): {description} |
 
 ## Lessons Learned
 - {What went well}

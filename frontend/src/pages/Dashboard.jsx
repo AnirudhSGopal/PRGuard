@@ -17,11 +17,11 @@ import {
 } from '../api/client'
 
 const PROVIDER_LIST = [
-  { id: 'claude', label: 'Claude Sonnet',  sub: 'Anthropic · Best for code',   placeholder: 'sk-ant-...', recommended: true  },
-  { id: 'gpt',    label: 'GPT-4o',         sub: 'OpenAI · Most popular',        placeholder: 'sk-...',     recommended: false },
-  { id: 'gemini', label: 'Gemini 1.5 Pro', sub: 'Google · Free tier available', placeholder: 'AIza...',    recommended: false },
+  { id: 'claude-3-5-sonnet-20240620', label: 'Claude Sonnet 3.5', sub: 'Anthropic · Best for code',   placeholder: 'sk-ant-...', recommended: true  },
+  { id: 'gpt-4o',                   label: 'GPT-4o',          sub: 'OpenAI · Most popular',        placeholder: 'sk-...',     recommended: false },
+  { id: 'gemini-2.0-flash',          label: 'Gemini 2.0 Flash', sub: 'Google · Free tier available', placeholder: 'AIza...',    recommended: false  },
 ]
-const PROVIDER_NAMES = { claude: 'Claude Sonnet', gpt: 'GPT-4o', gemini: 'Gemini 1.5 Pro' }
+const PROVIDER_NAMES = { 'claude-3-5-sonnet-20240620': 'Claude Sonnet 3.5', 'gpt-4o': 'GPT-4o', 'gemini-2.0-flash': 'Gemini 2.0 Flash' }
 
 // ── Resize handle ─────────────────────────────────────────────────────────────
 function ResizeHandle({ onMouseDown, dark }) {
@@ -147,12 +147,14 @@ export default function Dashboard() {
 
   const handleIssueSelect = useCallback((issue) => {
     setSelectedIssue(issue)
-    setChatInput(`Explain issue #${issue.number}: "${issue.title}". Which files are responsible and how do I fix it?`)
-    setAutoSend(true)
+    const body = (issue.body || issue.description || "").trim()
+    const message = `Issue #${issue.number}: ${issue.title}\n\n${body}`.trim()
+    setChatInput(message)
+    setAutoSend(false)
   }, [])
 
   const handleFileSelect = useCallback((filePath) => {
-    setChatInput(`Explain what ${filePath} does and how it connects to the rest of the codebase.`)
+    setChatInput(`Explain the file ${filePath}`)
     setAutoSend(false)
   }, [])
 
@@ -293,6 +295,7 @@ export default function Dashboard() {
   const handleApiSave = async (providerId) => {
     const key = apiKeys[providerId]
     if (!key || key.includes('...')) return
+    console.log("SAVING KEY:", key.substring(0, 10))
     try {
       await saveApiKey(providerId, key, true)
       await refreshApiStatus()

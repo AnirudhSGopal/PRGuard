@@ -37,7 +37,7 @@ Parse the user's request into a focused search query.
 
 ## 2. Execute Search
 
-Use the `web_search` tool with:
+Use the `search_web` tool with:
 - Query: The formulated search query
 - Domain (optional): Prioritize specific site (e.g., `docs.python.org`)
 

@@ -59,11 +59,6 @@ files_changed: []
 
 ## Section Rules
 
-**YAML safety for `trigger`:**
-- Always quote the trigger string.
-- Escape internal quotes (`\"`) when needed.
-- If input spans multiple lines, convert to a single line to keep frontmatter valid.
-
 **Frontmatter (status, trigger, timestamps):**
 - `status`: OVERWRITE - reflects current phase
 - `trigger`: IMMUTABLE - verbatim user input, never changes

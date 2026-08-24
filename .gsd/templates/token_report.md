@@ -35,7 +35,7 @@ created: {ISO timestamp}
 
 | File | Before | After | Savings |
 |------|--------|-------|---------|
-| {file} | {N} | {summary} | {N} tokens |
+| {file} | {N} | summary | {N} tokens |
 
 ## Efficiency Analysis
 

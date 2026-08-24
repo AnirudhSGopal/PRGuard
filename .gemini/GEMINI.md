@@ -8,9 +8,9 @@
 
 ## Canonical Rules
 
-**Canonical methodology guidance is in [GSD-STYLE.md](../GSD-STYLE.md).**
+**All canonical rules are in [PROJECT_RULES.md](../PROJECT_RULES.md).**
 
-This file provides Gemini-specific integration. For the complete methodology, see GSD-STYLE.md.
+This file provides Gemini-specific integration. For the complete methodology, see PROJECT_RULES.md.
 
 ---
 
@@ -62,6 +62,6 @@ Key recommendations:
 ---
 
 *GSD Methodology adapted for Google Antigravity*
-*Canonical rules: [GSD-STYLE.md](../GSD-STYLE.md)*
+*Canonical rules: [PROJECT_RULES.md](../PROJECT_RULES.md)*
 *Source: https://github.com/glittercowboy/get-shit-done*
 

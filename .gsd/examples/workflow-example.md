@@ -24,7 +24,6 @@ A simple RESTful API for managing todo items.
 ## Success Criteria
 - [ ] POST /todos creates a todo
 - [ ] GET /todos returns list
-- [ ] PUT /todos/:id updates a todo
 - [ ] DELETE /todos/:id removes item
 ```
 
@@ -65,7 +64,7 @@ Create SQLite database with todos table.
     Create SQLite connection using better-sqlite3.
     Create todos table with: id, title, completed, created_at.
   </action>
-  <verify>npx tsx src/db.ts exits without error</verify>
+  <verify>node -e "require('./src/db')" exits without error</verify>
   <done>Database file exists, table created</done>
 </task>
 ```

@@ -55,18 +55,12 @@ updated: [ISO timestamp]
 **Objective:** {What this phase delivers}
 **Depends on:** Phase 2
 
-**Plans:**
-- [ ] Plan 3.1: {name}
-
 ---
 
 ### Phase 4: {Polish/Launch}
 **Status:** ⬜ Not Started
 **Objective:** {Final touches and deployment}
 **Depends on:** Phase 3
-
-**Plans:**
-- [ ] Plan 4.1: {name}
 
 ---
 

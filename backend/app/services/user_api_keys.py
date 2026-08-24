@@ -1,11 +1,16 @@
 import hashlib
+import logging
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import UserApiKey
 from app.services.crypto import decrypt_secret, encrypt_secret
+from app.config import settings
+
+logger = logging.getLogger("prguard")
 
 ALLOWED_PROVIDERS = {"claude", "gpt", "gemini"}
 
@@ -88,31 +93,32 @@ async def upsert_user_api_key(
     normalized = validate_provider_or_400(provider)
     key_value = (api_key or "").strip()
     _validate_key_format(normalized, key_value)
+    print(f"SAVING TO user_api_keys - Provider: {normalized}, Key: {key_value[:10]}")
 
-    stmt = select(UserApiKey).where(
-        UserApiKey.user_id == user_id,
-        UserApiKey.provider == normalized,
-    )
-    result = await db.execute(stmt)
-    row = result.scalar_one_or_none()
     encrypted = encrypt_secret(key_value)
     fingerprint = key_fingerprint(key_value)
 
-    if row:
-        # Update existing row and merge to ensure changes are tracked in async context
-        row.encrypted_api_key = encrypted
-        row.key_fingerprint = fingerprint
-        row.is_active = make_active
-        row = await db.merge(row)
-    else:
-        row = UserApiKey(
-            user_id=user_id,
-            provider=normalized,
-            encrypted_api_key=encrypted,
-            key_fingerprint=fingerprint,
-            is_active=make_active,
-        )
-        db.add(row)
+    # REAL UPSERT using ON CONFLICT
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    
+    stmt = pg_insert(UserApiKey).values(
+        user_id=user_id,
+        provider=normalized,
+        encrypted_api_key=encrypted,
+        key_fingerprint=fingerprint,
+        is_active=make_active,
+        updated_at=func.now()
+    ).on_conflict_do_update(
+        constraint="uq_user_provider_api_key",
+        set_={
+            "encrypted_api_key": encrypted,
+            "key_fingerprint": fingerprint,
+            "is_active": make_active,
+            "updated_at": func.now()
+        }
+    )
+    
+    await db.execute(stmt)
 
     if make_active:
         other_stmt = select(UserApiKey).where(
@@ -122,7 +128,6 @@ async def upsert_user_api_key(
         other_rows = (await db.execute(other_stmt)).scalars().all()
         for item in other_rows:
             item.is_active = False
-            # Merge each item to ensure changes are tracked
             await db.merge(item)
 
     await db.commit()
@@ -130,7 +135,7 @@ async def upsert_user_api_key(
     return {
         "provider": normalized,
         "masked_key": mask_key(key_value),
-        "is_active": bool(row.is_active),
+        "is_active": make_active,
         "fingerprint": fingerprint,
     }
 
@@ -190,24 +195,127 @@ async def resolve_user_provider_key(
     user_id: str,
     requested_provider: str | None,
 ) -> tuple[str, str]:
+    print(f"FETCHING KEY for user: {user_id}, provider: {requested_provider}")
     normalized_requested = normalize_provider(requested_provider)
     if normalized_requested and normalized_requested not in ALLOWED_PROVIDERS:
         raise HTTPException(status_code=400, detail="Invalid provider. Use: claude, gpt, or gemini.")
+    
     rows = await get_user_key_rows(db, user_id)
     if not rows:
-        raise HTTPException(status_code=400, detail="No API key configured. Add one in settings.")
+        if settings.ENVIRONMENT == "development":
+            # In development, try falling back to global environment keys.
+            global_provider = normalized_requested or settings.MODEL_PROVIDER
+            
+            # Use consistent mapping for global keys
+            key_map = {
+                "claude": "ANTHROPIC_API_KEY",
+                "gpt": "OPENAI_API_KEY",
+                "gemini": "GEMINI_API_KEY"
+            }
+            attr_name = key_map.get(global_provider)
+            global_key = getattr(settings, attr_name, None) if attr_name else None
+            
+            if global_key:
+                return global_provider, global_key.strip()
+            
+            # If no global key either, just return empty so llm.generate can handle it gracefully.
+            return global_provider or "claude", ""
+            
+        raise HTTPException(status_code=400, detail="No API key configured. Add one in Settings.")
 
-    by_provider = {row.provider: row for row in rows}
+    by_provider = {row.provider: row for row in reversed(rows)}
 
     if normalized_requested:
         selected = by_provider.get(normalized_requested)
-        if not selected:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No API key configured for provider '{normalized_requested}'.",
-            )
-        return selected.provider, decrypt_secret(selected.encrypted_api_key)
+        if selected:
+            key = decrypt_secret(selected.encrypted_api_key)
+            print(f"FETCHED KEY: {key[:10]}")
+            return selected.provider, key
+        
+        # If requested not found, try fallback to any active/first key
+        active = next((row for row in rows if row.is_active), None)
+        selected = active or rows[0]
+        logger.info(f"Requested provider '{normalized_requested}' not found. Falling back to '{selected.provider}'.")
+        key = decrypt_secret(selected.encrypted_api_key)
+        print('FETCHED KEY:', key[:10])
+        return selected.provider, key
 
     active = next((row for row in rows if row.is_active), None)
     selected = active or rows[0]
-    return selected.provider, decrypt_secret(selected.encrypted_api_key)
+    key = decrypt_secret(selected.encrypted_api_key)
+    print(f"FETCHED KEY: {key[:10]}")
+    return selected.provider, key
+
+
+async def resolve_user_provider_keys(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    requested_provider: str | None,
+) -> list[tuple[str, str]]:
+    """Return provider/key candidates in priority order for chat fallback."""
+    print(f"FETCHING CANDIDATES for user: {user_id}, requested: {requested_provider}")
+    
+    normalized_requested = normalize_provider(requested_provider)
+    rows = await get_user_key_rows(db, user_id)
+    
+    candidates: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add_row(row: UserApiKey) -> None:
+        p = (row.provider or "").strip().lower()
+        if not p or p in seen:
+            return
+        key = decrypt_secret(row.encrypted_api_key)
+        if key:
+            print(f"FETCHED CANDIDATE: {p} {key[:10]}")
+            candidates.append((p, key))
+            seen.add(p)
+
+    if rows:
+        # Separate into active and inactive
+        active_keys = [r for r in rows if r.is_active]
+        inactive_keys = [r for r in rows if not r.is_active]
+        
+        # 1. Requested provider if active
+        if normalized_requested:
+            for r in active_keys:
+                if r.provider == normalized_requested:
+                    add_row(r)
+                    break
+        
+        # 2. Other active keys
+        for r in active_keys:
+            add_row(r)
+            
+        # 3. Requested provider if inactive
+        if normalized_requested:
+            for r in inactive_keys:
+                if r.provider == normalized_requested:
+                    add_row(r)
+                    break
+                    
+        # 4. Other inactive keys
+        for r in inactive_keys:
+            add_row(r)
+
+    # 5. Fallback to global keys in development ONLY if no candidates found
+    if not candidates and settings.ENVIRONMENT == "development":
+        provider_order = [normalized_requested or settings.MODEL_PROVIDER, "claude", "gpt", "gemini"]
+        key_map = {
+            "claude": "ANTHROPIC_API_KEY",
+            "gpt": "OPENAI_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+        }
+
+        for provider in provider_order:
+            normalized = normalize_provider(provider)
+            if normalized not in ALLOWED_PROVIDERS or normalized in seen:
+                continue
+            attr_name = key_map.get(normalized)
+            global_key = getattr(settings, attr_name, None) if attr_name else None
+            if global_key and global_key.strip():
+                candidates.append((normalized, global_key.strip()))
+                seen.add(normalized)
+
+    return candidates

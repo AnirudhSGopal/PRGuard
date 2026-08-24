@@ -25,7 +25,7 @@ Orchestrator stays lean: discover plans, analyze dependencies, group into waves,
 </objective>
 
 <context>
-**Phase:** $PHASE (passed as first argument)
+**Phase:** $ARGUMENTS (required - phase number to execute)
 
 **Flags:**
 - `--gaps-only` — Execute only gap closure plans (created by `/verify` when issues found)
@@ -42,26 +42,14 @@ Orchestrator stays lean: discover plans, analyze dependencies, group into waves,
 
 **PowerShell:**
 ```powershell
-if (-not (Test-Path ".gsd/ROADMAP.md")) {
-      Write-Error "Missing .gsd/ROADMAP.md. Run /plan first."
-      exit 1
-}
-if (-not (Test-Path ".gsd/STATE.md")) {
-      Write-Error "Missing .gsd/STATE.md. Run /plan first."
-      exit 1
-}
+Test-Path ".gsd/ROADMAP.md"
+Test-Path ".gsd/STATE.md"
 ```
 
 **Bash:**
 ```bash
-if [ ! -f ".gsd/ROADMAP.md" ]; then
-   echo "Missing .gsd/ROADMAP.md. Run /plan first." >&2
-   exit 1
-fi
-if [ ! -f ".gsd/STATE.md" ]; then
-   echo "Missing .gsd/STATE.md. Run /plan first." >&2
-   exit 1
-fi
+test -f ".gsd/ROADMAP.md"
+test -f ".gsd/STATE.md"
 ```
 
 **If not found:** Error — user should run `/plan` first.
@@ -145,7 +133,6 @@ Read `wave` field from each plan's frontmatter:
 phase: 1
 plan: 2
 wave: 1
-gap_closure: false  # set to true for gap-closure plans
 ---
 ```
 
@@ -176,8 +163,6 @@ For each plan in the current wave:
 2. **Execute tasks** — Follow `<task>` blocks in order
 3. **Verify each task** — Run `<verify>` commands
 4. **Commit per task:**
-   - Derive `{task-name}` from the `<task>` block header/title.
-   - Fallback order: `<task title="...">` attribute, then the first non-empty line in the task body.
    ```bash
    git add -A
    git commit -m "feat(phase-{N}): {task-name}"
@@ -196,10 +181,7 @@ Only after current wave fully completes.
 
 After all waves complete:
 
-1. **Read phase goal** from ROADMAP.md.
-   - Commands must be defined in either `.gsd/phases/{phase}/verify.yml`, `.gsd/phases/{phase}/verify.sh`, or a dedicated ROADMAP.md verification entry.
-   - `verify.yml` schema: top-level `verification.commands` with an array of shell command strings.
-   - Execution behavior: run in phase working directory, sequentially; any non-zero exit code fails verification.
+1. **Read phase goal** from ROADMAP.md
 2. **Check must-haves** against actual codebase (not SUMMARY claims)
 3. **Run verification commands** specified in phase
 
@@ -213,25 +195,6 @@ After all waves complete:
 
 ### Verdict: PASS / FAIL
 ```
-
-If verification fails, create gap-closure plans in `.gsd/phases/{phase}/` with frontmatter:
-
-```yaml
----
-phase: {N}
-plan: fix-{issue}
-wave: 1
-gap_closure: true
-status: open
-created_by: workflow
----
-```
-
-Each gap-closure plan should include:
-- Root issue and impacted must-have(s)
-- Concrete remediation tasks
-- Explicit verification command(s)
-- Done criteria tied to failed requirement(s)
 
 **Route by verdict:**
 - `PASS` → Continue to step 8
@@ -270,17 +233,8 @@ Phase {N} executed successfully. {X} plans, {Y} tasks completed.
 
 ## 9. Commit Phase Completion
 
-**PowerShell:**
-```powershell
-git add .gsd/ROADMAP.md .gsd/STATE.md
-if (Test-Path ".gsd/REQUIREMENTS.md") { git add .gsd/REQUIREMENTS.md }
-git commit -m "docs(phase-{N}): complete {phase-name}"
-```
-
-**Bash:**
 ```bash
-git add .gsd/ROADMAP.md .gsd/STATE.md
-if [ -f .gsd/REQUIREMENTS.md ]; then git add .gsd/REQUIREMENTS.md; fi
+git add .gsd/ROADMAP.md .gsd/STATE.md .gsd/REQUIREMENTS.md
 git commit -m "docs(phase-{N}): complete {phase-name}"
 ```
 

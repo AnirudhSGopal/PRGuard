@@ -78,7 +78,7 @@ Files to read: src/app/api/ structure, existing auth if any
     On success: generate JWT, set httpOnly cookie, return 200.
     On failure: return 401 with generic error.
   </action>
-  <verify>curl -X POST localhost:3000/api/auth/login -H "Content-Type: application/json" -d '{"email":"test@example.com","password":"test123"}'</verify>
+  <verify>curl -X POST localhost:3000/api/auth/login -d '{"email":"test@example.com","password":"test123"}'</verify>
   <done>Valid credentials return 200 + Set-Cookie header</done>
 </task>
 

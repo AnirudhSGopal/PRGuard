@@ -2,8 +2,6 @@
 
 Template for `.gsd/STATE.md` — project memory across sessions.
 
-Scope: STATE.md is the current snapshot only. Historical chronology belongs in JOURNAL.md.
-
 ---
 
 ## File Template

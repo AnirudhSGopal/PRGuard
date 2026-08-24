@@ -1,10 +1,20 @@
+import re
+
 from fastapi import APIRouter, Cookie, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Optional
 import logging
 from app.services import llm
+from app.services.llm import LLMProviderError
 from app.services.github import fetch_issue
-from app.services.rag import is_indexed, index_repo, get_index_stats
+from app.services.rag import (
+    is_indexed,
+    index_repo,
+    get_index_stats,
+    get_file_chunks,
+    get_file_references,
+    format_file_explanation_context,
+)
 from app.services.github import fetch_all_files
 from app.limiter import chat_limiter, index_limiter
 from app.models import get_db, User, ConnectedRepository
@@ -14,7 +24,7 @@ from app.services.admin_state import (
     record_chat_log,
     record_user_activity,
 )
-from app.services.user_api_keys import resolve_user_provider_key
+from app.services.user_api_keys import resolve_user_provider_keys
 from app.middleware import requireUser
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +35,41 @@ logger = logging.getLogger("prguard")
 router = APIRouter()
 
 
+FILE_EXPLANATION_RE = re.compile(r"^\s*explain(?:\s+the)?\s+file\s*:?(?P<path>.+?)\s*$", re.IGNORECASE)
+
+
+def _extract_file_path(message: str) -> str | None:
+    match = FILE_EXPLANATION_RE.match(message or "")
+    if not match:
+        return None
+    path = match.group("path").strip().strip('"').strip("'").strip("`")
+    return path or None
+
+
+def _is_provider_retryable_error(error_text: str) -> bool:
+    lower_error = (error_text or "").lower()
+    return any(
+        token in lower_error
+        for token in (
+            "429",
+            "503",
+            "quota",
+            "rate limit",
+            "rate limited",
+            "too many requests",
+            "authentication",
+            "unauthorized",
+            "forbidden",
+            "not valid",
+            "invalid api key",
+            "http request failed",
+            "service unavailable",
+            "high demand",
+            "overloaded",
+        )
+    )
+
+
 # ── Request / Response models ─────────────────────────────────────────────────
 
 
@@ -32,6 +77,7 @@ class ChatRequest(BaseModel):
     message: str
     repo: Optional[str] = None
     provider: Optional[str] = "claude"
+    model: Optional[str] = None
     issue_number: Optional[int] = None
     history: list[dict] = Field(default_factory=list)
 
@@ -75,8 +121,20 @@ async def chat(
     Main chat endpoint.
     Connects frontend ChatPanel to RAG + LLM pipeline.
     """
+    print("=" * 60)
+    print(f"[CHAT] -- New Chat Request --")
+    print(f"[CHAT] User: {current_user.username} ({current_user.id})")
+    print(f"[CHAT] Repo: {request.repo}")
+    print(f"[CHAT] Provider (requested): {request.provider}")
+    print(f"[CHAT] Model (requested): {request.model or 'auto'}")
+    print(f"[CHAT] Message: {request.message[:100]}{'...' if len(request.message) > 100 else ''}")
+    print(f"[CHAT] History length: {len(request.history)}")
+    print(f"[CHAT] Issue number: {request.issue_number}")
+    print("=" * 60)
+
     logger.info(f"[CHAT] Received chat request for repo: {request.repo}")
     user = current_user
+    file_explanation_path = _extract_file_path(request.message)
     provider = (request.provider or "").strip().lower() or "claude"
     if provider == "gpt4o":
         provider = "gpt"
@@ -84,18 +142,33 @@ async def chat(
     
     try:
         # ── RATE LIMIT CHECK ──
-        chat_limiter.check("global")
-        logger.info(f"[CHAT] Rate limit check passed")
+        print(f"[CHAT] Step 1: Rate limit check for user {user.id}...")
+        chat_limiter.check(str(user.id))
+        print(f"[CHAT] Step 1: [OK] Rate limit passed")
 
         if not request.repo:
             raise HTTPException(status_code=400, detail="No repo selected.")
 
-        provider, resolved_api_key = await resolve_user_provider_key(
+        # ── RESOLVE PROVIDER KEYS ──
+        print(f"[CHAT] Step 2: Resolving provider keys for '{provider}'...")
+        provider_candidates = await resolve_user_provider_keys(
             db,
             user_id=user.id,
             requested_provider=provider,
         )
+        print(f"[CHAT] Step 2: [OK] Candidates resolved: {[(p[0], p[1][:10] + '...') for p in provider_candidates]}")
 
+        if not provider_candidates:
+            raise HTTPException(
+                status_code=400,
+                detail="No API key configured. Add one in Settings and try again.",
+            )
+
+        provider, resolved_api_key = provider_candidates[0]
+        print(f"[CHAT] Step 2: Primary provider: {provider}, key: {resolved_api_key[:10]}...")
+
+        # ── REPO CONNECTION CHECK ──
+        print(f"[CHAT] Step 3: Checking repo connection for '{request.repo}'...")
         stmt = select(ConnectedRepository).where(
             ConnectedRepository.user_id == user.id,
             ConnectedRepository.repo_name == request.repo,
@@ -103,12 +176,23 @@ async def chat(
         result = await db.execute(stmt)
         connection = result.scalar_one_or_none()
         if not connection:
+            print(f"[CHAT] Step 3: [FAIL] Repo not connected!")
             raise HTTPException(
                 status_code=403,
                 detail="Repository not connected. You must authorize this repository in the dashboard first.",
             )
+        print(f"[CHAT] Step 3: [OK] Repo connection verified")
 
-        logger.info(f"[CHAT] Authentication and repo connection verified")
+
+        # ── API KEY VALIDATION ──
+        print(f"[CHAT] Step 4: Validating API key...")
+        if not resolved_api_key or not resolved_api_key.strip():
+            print(f"[CHAT] Step 4: [FAIL] No API key for {provider}!")
+            raise HTTPException(
+                status_code=400,
+                detail=f"No API key configured for {provider}. Please add an API key in Settings and try again."
+            )
+        print(f"[CHAT] Step 4: [OK] API key valid ({resolved_api_key[:10]}...)")
 
         # fetch issue details if issue_number provided
         issue = None
@@ -119,8 +203,9 @@ async def chat(
                     issue_number=request.issue_number,
                     token=gh_token,
                 )
+                print(f"[CHAT] Step 5: [OK] Issue #{request.issue_number} fetched")
             except Exception as e:
-                logger.warning(f"[CHAT] Could not fetch issue #{request.issue_number}: {str(e)}")
+                print(f"[CHAT] Step 5: [WARN] Could not fetch issue #{request.issue_number}: {e}")
                 issue = None  # Continue without issue context
 
         # check if repo is indexed
@@ -134,7 +219,26 @@ async def chat(
                 logger.warning(f"[CHAT] Could not check indexed status: {str(e)}")
                 indexed = False  # Continue without indexing info
 
-        logger.info(f"[CHAT] Repo indexed status: {indexed}")
+        rag_chunks_to_use = 5 if (settings.CHAT_ENABLE_RAG and indexed) else 0
+        print(f"[CHAT] Step 5: RAG enabled={settings.CHAT_ENABLE_RAG}, indexed={indexed}, chunks={rag_chunks_to_use}")
+
+        file_explanation_context = None
+        if file_explanation_path:
+            file_chunks = await get_file_chunks(request.repo, file_explanation_path)
+            if not file_chunks:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"File '{file_explanation_path}' could not be found in the repository index. "
+                        f"Index the repository first, then try again."
+                    ),
+                )
+            file_references = await get_file_references(request.repo, file_explanation_path)
+            file_explanation_context = format_file_explanation_context(
+                file_explanation_path,
+                file_chunks,
+                file_references,
+            )
 
         record_user_activity(user_id=user.id, username=user.username)
         record_api_key_status(
@@ -145,18 +249,56 @@ async def chat(
             validation_result="present",
         )
 
-        logger.info(
-            f"[CHAT] Starting LLM generation with {provider or 'default'}..."
-        )
-        result = await llm.generate(
-            question=request.message,
-            repo=request.repo,
-            history=request.history or [],
-            provider=provider,
-            api_key=resolved_api_key,
-            issue=issue,
-            n_chunks=8 if (settings.CHAT_ENABLE_RAG and indexed) else 0,
-        )
+        # ── LLM GENERATION ──
+        print(f"[CHAT] Step 6: Starting LLM generation...")
+        result = None
+        last_error = None
+        for candidate_provider, candidate_key in provider_candidates:
+            print(f"[CHAT] Step 6: Trying {candidate_provider} (key: {candidate_key[:10]}...)")
+            try:
+                # Trim history to last 6 messages (3 turns) to save tokens
+                trimmed_history = (request.history or [])[-6:]
+                
+                result = await llm.generate(
+                    question=request.message,
+                    repo=request.repo,
+                    history=trimmed_history,
+                    provider=candidate_provider,
+                    api_key=candidate_key,
+                    issue=issue,
+                    n_chunks=rag_chunks_to_use,
+                    extra_context=file_explanation_context,
+                    model=request.model,
+                )
+                print(f"[CHAT] Step 6: [OK] LLM generation succeeded with {candidate_provider}")
+                provider = result.get("provider", candidate_provider)
+                resolved_api_key = candidate_key
+                break
+            except Exception as e:
+                print(f"[CHAT] Step 6: [FAIL] LLM failed for {candidate_provider}: {str(e)[:200]}")
+                last_error = e
+                error_text = str(e)
+                logger.error(f"[CHAT] llm.generate failed for {candidate_provider}: {error_text}")
+                if not _is_provider_retryable_error(error_text):
+                    raise
+
+        
+        if result is None:
+            err = str(last_error) if last_error else "LLM service returned no result"
+            print(f"[CHAT] Step 6: [FAIL] ALL providers failed! Last error: {err[:200]}")
+            logger.error(f"LLM call failed: {err}")
+            if user:
+                record_chat_log(
+                    user_id=user.id,
+                    username=user.username,
+                    repo=request.repo or "",
+                    provider=provider,
+                    success=False,
+                    error=err,
+                )
+            # Raise as ValueError so the exception handler can parse the string
+            # and map it to 400 (auth) or 503 (rate limit) correctly.
+            raise ValueError(err)
 
         # Validate result structure
         if not result:
@@ -188,7 +330,13 @@ async def chat(
             logger.warning(f"[CHAT] Could not format sources: {str(e)}")
             sources = []  # Continue without sources
 
-        logger.info(f"Response generated successfully using {provider}")
+        print(f"[CHAT] Step 7: [OK] Response ready")
+        print(f"[CHAT]   Provider: {provider}")
+        print(f"[CHAT]   Answer length: {len(answer)} chars")
+        print(f"[CHAT]   Sources: {len(sources)}")
+        print(f"[CHAT]   RAG indexed: {indexed}")
+        print("=" * 60)
+
         record_chat_log(
             user_id=user.id,
             username=user.username,
@@ -205,8 +353,9 @@ async def chat(
             indexed=indexed,
         )
 
-    except ValueError as e:
-        logger.warning(f"Validation error in chat: {str(e)}")
+    except (ValueError, LLMProviderError) as e:
+        error_text = str(e)
+        logger.warning(f"Validation or provider error in chat: {error_text}")
         if user:
             record_chat_log(
                 user_id=user.id,
@@ -214,9 +363,40 @@ async def chat(
                 repo=request.repo or "",
                 provider=provider,
                 success=False,
-                error=str(e),
+                error=error_text,
             )
-        raise HTTPException(status_code=400, detail=str(e))
+        lower_error = error_text.lower()
+        if (
+            "api key" in lower_error
+            or "authentication" in lower_error
+            or "unauthorized" in lower_error
+            or "forbidden" in lower_error
+            or "not valid" in lower_error
+            or "pass a valid api key" in lower_error
+            or ("invalid" in lower_error and "api" in lower_error)
+        ):
+            raise HTTPException(status_code=400, detail=error_text)
+        # Handle provider rate limits and quota issues as upstream unavailability.
+        if (
+            "429" in lower_error
+            or "quota" in lower_error
+            or "rate limit" in lower_error
+            or "rate limited" in lower_error
+            or "too many requests" in lower_error
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail=error_text,
+            )
+        if "503" in lower_error or "high demand" in lower_error or "service unavailable" in lower_error or "overloaded" in lower_error:
+            raise HTTPException(status_code=503, detail=error_text)
+        # Only map to 502 if it's truly a gateway/connectivity issue
+        if ("api error" in lower_error and "returned empty response" in lower_error) or "http request failed" in lower_error or "timeout" in lower_error:
+            raise HTTPException(status_code=502, detail=error_text)
+            
+        if isinstance(e, LLMProviderError):
+            raise HTTPException(status_code=503, detail=error_text)
+        raise HTTPException(status_code=400, detail=error_text)
 
     except HTTPException:
         if user:
@@ -229,6 +409,7 @@ async def chat(
                 error="HTTP error",
             )
         raise  # Re-raise HTTP exceptions as-is
+    
     
     except Exception as e:
         logger.error(f"LLM Error in chat endpoint: {str(e)}", exc_info=True)
@@ -260,7 +441,15 @@ async def index_repository(
     db: AsyncSession = Depends(get_db),
 ):
     # ── RATE LIMIT CHECK ──
-    index_limiter.check("global")
+    index_limiter.check(str(current_user.id))
+
+    # ── OPENAI_API_KEY CHECK ──
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=400,
+            detail="RAG indexing requires OPENAI_API_KEY. "
+                   "Please add it to your environment variables.",
+        )
 
     user = current_user
 

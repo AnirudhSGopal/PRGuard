@@ -1,56 +1,62 @@
-from __future__ import annotations
-
 import logging
-import threading
 from typing import Optional
 
-from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import delete, func, select
+from openai import AsyncOpenAI
+from sqlalchemy import select, func, or_
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.base import AsyncSessionLocal
+from app.config import settings
 from app.models.vector_chunk import CodeChunk
+from app.models.base import AsyncSessionLocal
 
 logger = logging.getLogger("prguard")
 
-_embedding_model = None
-_embedding_lock = threading.Lock()
 
+# ── Chunking ──────────────────────────────────────────────────────────────────
 
-def _get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        with _embedding_lock:
-            if _embedding_model is None:
-                from sentence_transformers import SentenceTransformer
-
-                logger.info("[RAG] Loading embedding model all-MiniLM-L6-v2")
-                _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _embedding_model
+def chunk_code(content: str, path: str, language: str) -> list[dict]:
+    """
+    Split a file into function-level chunks.
+    Falls back to line-based chunking for non-Python files.
+    """
+    if language == "python":
+        return _chunk_python(content, path)
+    else:
+        return _chunk_by_lines(content, path, language)
 
 
 def _chunk_python(content: str, path: str) -> list[dict]:
+    """
+    Split Python files at function and class boundaries.
+    Each function/class becomes one chunk.
+    """
     lines = content.split("\n")
-    chunks: list[dict] = []
-    current_chunk_lines: list[str] = []
+    chunks = []
+    current_chunk_lines = []
     current_start = 0
     in_chunk = False
 
     for i, line in enumerate(lines):
         stripped = line.strip()
-        is_definition = stripped.startswith("def ") or stripped.startswith("async def ") or stripped.startswith("class ")
+
+        # detect function or class definition
+        is_definition = (
+            stripped.startswith("def ")
+            or stripped.startswith("async def ")
+            or stripped.startswith("class ")
+        )
 
         if is_definition and in_chunk and current_chunk_lines:
+            # save previous chunk
             chunk_content = "\n".join(current_chunk_lines).strip()
             if chunk_content:
-                chunks.append(
-                    {
-                        "content": chunk_content,
-                        "path": path,
-                        "start_line": current_start + 1,
-                        "end_line": i,
-                        "language": "python",
-                    }
-                )
+                chunks.append({
+                    "content":    chunk_content,
+                    "path":       path,
+                    "start_line": current_start + 1,
+                    "end_line":   i,
+                    "language":   "python",
+                })
             current_chunk_lines = [line]
             current_start = i
         else:
@@ -59,187 +65,362 @@ def _chunk_python(content: str, path: str) -> list[dict]:
                 current_start = i
             current_chunk_lines.append(line)
 
+    # save last chunk
     if current_chunk_lines:
         chunk_content = "\n".join(current_chunk_lines).strip()
         if chunk_content:
-            chunks.append(
-                {
-                    "content": chunk_content,
-                    "path": path,
-                    "start_line": current_start + 1,
-                    "end_line": len(lines),
-                    "language": "python",
-                }
-            )
+            chunks.append({
+                "content":    chunk_content,
+                "path":       path,
+                "start_line": current_start + 1,
+                "end_line":   len(lines),
+                "language":   "python",
+            })
 
+    # if no functions found treat whole file as one chunk
     if not chunks:
-        chunks.append(
-            {
-                "content": content.strip(),
-                "path": path,
-                "start_line": 1,
-                "end_line": len(lines),
-                "language": "python",
-            }
-        )
+        chunks.append({
+            "content":    content.strip(),
+            "path":       path,
+            "start_line": 1,
+            "end_line":   len(lines),
+            "language":   "python",
+        })
 
     return chunks
 
 
-def _chunk_by_lines(content: str, path: str, language: str, chunk_size: int = 60, overlap: int = 10) -> list[dict]:
+def _chunk_by_lines(
+    content: str,
+    path: str,
+    language: str,
+    chunk_size: int = 60,
+    overlap: int = 10,
+) -> list[dict]:
+    """
+    For non-Python files split into overlapping line windows.
+    Overlap ensures context is not lost at chunk boundaries.
+    """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be > 0")
-    if overlap < 0 or overlap >= chunk_size:
-        raise ValueError("overlap must be >= 0 and < chunk_size")
+    if overlap < 0:
+        raise ValueError("overlap must be >= 0")
+    step = chunk_size - overlap
+    if step <= 0:
+        raise ValueError("overlap must be strictly less than chunk_size")
 
     lines = content.split("\n")
-    chunks: list[dict] = []
-    step = chunk_size - overlap
+    chunks = []
     start = 0
 
     while start < len(lines):
         end = min(start + chunk_size, len(lines))
-        chunk_content = "\n".join(lines[start:end]).strip()
+        chunk_lines = lines[start:end]
+        chunk_content = "\n".join(chunk_lines).strip()
+
         if chunk_content:
-            chunks.append(
-                {
-                    "content": chunk_content,
-                    "path": path,
-                    "start_line": start + 1,
-                    "end_line": end,
-                    "language": language,
-                }
-            )
-        start += step
+            chunks.append({
+                "content":    chunk_content,
+                "path":       path,
+                "start_line": start + 1,
+                "end_line":   end,
+                "language":   language,
+            })
+
+        start += step  # overlap for context continuity
 
     return chunks
 
 
-def chunk_code(content: str, path: str, language: str) -> list[dict]:
-    if language == "python":
-        return _chunk_python(content, path)
-    return _chunk_by_lines(content, path, language)
+# ── Embedding ─────────────────────────────────────────────────────────────────
+
+async def embed(text: str) -> list[float]:
+    """Convert a single text string into an embedding vector."""
+    if not settings.OPENAI_API_KEY:
+        raise ValueError(
+            "RAG requires OPENAI_API_KEY. "
+            "Add it to .env or disable RAG with "
+            "CHAT_ENABLE_RAG=False"
+        )
+    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    res = await client.embeddings.create(
+        input=text,
+        model="text-embedding-3-small"
+    )
+    return res.data[0].embedding
 
 
-def embed(texts: list[str]) -> list[list[float]]:
-    return _get_embedding_model().encode(texts, show_progress_bar=False).tolist()
-
-
-async def ensure_vector_store() -> None:
-    # Schema and extension setup are handled during startup DB initialization.
-    return None
-
+# ── Indexing ──────────────────────────────────────────────────────────────────
 
 async def index_repo(repo: str, files: list[dict]) -> dict:
-    all_chunks: list[dict] = []
-    for file in files:
-        all_chunks.extend(chunk_code(file["content"], file["path"], file["language"]))
+    """
+    Index all files from a repo into PostgreSQL using pgvector.
+    Called after github.py fetches all files.
 
+    files = [{ path, content, language, size }]
+    Returns indexing stats.
+    """
     async with AsyncSessionLocal() as session:
-        async with session.begin():
-            await session.execute(delete(CodeChunk).where(CodeChunk.repo_name == repo))
-
-            if not all_chunks:
-                return {"indexed": 0, "chunks": 0, "repo": repo}
-
-            batch_size = 256
-            total_indexed = 0
-
-            for i in range(0, len(all_chunks), batch_size):
-                batch = all_chunks[i : i + batch_size]
-                vectors = await run_in_threadpool(lambda: embed([c["content"] for c in batch]))
-
-                session.add_all(
-                    [
-                        CodeChunk(
-                            repo_name=repo,
-                            path=chunk["path"],
-                            language=chunk["language"],
-                            start_line=chunk["start_line"],
-                            end_line=chunk["end_line"],
-                            content=chunk["content"],
-                            embedding=vector,
-                        )
-                        for chunk, vector in zip(batch, vectors)
-                    ]
-                )
-                total_indexed += len(batch)
-
-    return {"repo": repo, "files": len(files), "chunks": total_indexed, "indexed": True}
-
-
-async def retrieve(repo: str, query: str, n_results: int = 8, language_filter: Optional[str] = None) -> list[dict]:
-    query_vector = await run_in_threadpool(lambda: embed([query])[0])
-
-    async with AsyncSessionLocal() as session:
-        count_stmt = select(func.count(CodeChunk.id)).where(CodeChunk.repo_name == repo)
-        if language_filter:
-            count_stmt = count_stmt.where(CodeChunk.language == language_filter)
-        count = int((await session.execute(count_stmt)).scalar() or 0)
-        if count == 0:
-            return []
-
-        distance_expr = CodeChunk.embedding.cosine_distance(query_vector)
-        stmt = (
-            select(CodeChunk, distance_expr.label("distance"))
-            .where(CodeChunk.repo_name == repo)
-            .order_by(distance_expr)
-            .limit(min(n_results, count))
+        # clear existing index for this repo
+        # so re-indexing is always fresh
+        await session.execute(
+            CodeChunk.__table__.delete().where(CodeChunk.repo_name == repo)
         )
+        await session.commit()
+
+        all_chunks = []
+        for file in files:
+            chunks = chunk_code(
+                content=file["content"],
+                path=file["path"],
+                language=file["language"],
+            )
+            all_chunks.extend(chunks)
+
+        if not all_chunks:
+            return {"indexed": 0, "chunks": 0, "repo": repo}
+
+        # batch embed for performance
+        BATCH_SIZE = 256
+        total_indexed = 0
+        total_chunks = len(all_chunks)
+        
+        print(f"DEBUG: Indexing {total_chunks} code snippets for {repo}...")
+
+        for i in range(0, total_chunks, BATCH_SIZE):
+            batch = all_chunks[i: i + BATCH_SIZE]
+            texts = [c["content"] for c in batch]
+
+            # generate embeddings via OpenAI
+            if not settings.OPENAI_API_KEY:
+                raise ValueError(
+                    "RAG requires OPENAI_API_KEY. "
+                    "Add it to .env or disable RAG with "
+                    "CHAT_ENABLE_RAG=False"
+                )
+            _client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            res = await _client.embeddings.create(
+                input=texts,
+                model="text-embedding-3-small"
+            )
+            vectors = [item.embedding for item in res.data]
+
+            db_chunks = []
+            for j, c in enumerate(batch):
+                db_chunk = CodeChunk(
+                    repo_name=repo,
+                    path=c["path"],
+                    language=c["language"],
+                    start_line=c["start_line"],
+                    end_line=c["end_line"],
+                    content=c["content"],
+                    embedding=vectors[j]
+                )
+                db_chunks.append(db_chunk)
+
+            session.add_all(db_chunks)
+            await session.commit()
+
+            total_indexed += len(batch)
+            if (i // BATCH_SIZE) % 5 == 0:
+                print(f"DEBUG: Indexing in progress... {total_indexed}/{total_chunks} ({(total_indexed/total_chunks)*100:.1f}%)")
+
+        return {
+            "repo":    repo,
+            "files":   len(files),
+            "chunks":  total_indexed,
+            "indexed": True,
+        }
+
+
+# ── Retrieval ─────────────────────────────────────────────────────────────────
+
+async def retrieve(
+    repo: str,
+    query: str,
+    n_results: int = 8,
+    language_filter: Optional[str] = None,
+) -> list[dict]:
+    """
+    Search pgvector for the most relevant code chunks.
+    Returns ranked list of chunks with metadata.
+    """
+    # embed the query
+    query_vector = await embed(query)
+
+    async with AsyncSessionLocal() as session:
+        stmt = select(CodeChunk).where(CodeChunk.repo_name == repo)
         if language_filter:
             stmt = stmt.where(CodeChunk.language == language_filter)
+            
+        # Order by cosine distance
+        stmt = stmt.order_by(CodeChunk.embedding.cosine_distance(query_vector)).limit(n_results)
+        
+        result = await session.execute(stmt)
+        chunks = result.scalars().all()
 
-        rows = (await session.execute(stmt)).all()
+        results = []
+        for c in chunks:
+            results.append({
+                "content":    c.content,
+                "path":       c.path,
+                "start_line": c.start_line,
+                "end_line":   c.end_line,
+                "language":   c.language,
+                "similarity": 1.0, # Distance isn't natively returned with scalar, but it's ordered correctly
+            })
 
-    results: list[dict] = []
-    for chunk, distance in rows:
-        similarity = round(1 / (1 + float(distance or 0.0)), 3)
-        results.append(
-            {
-                "content": chunk.content,
-                "path": chunk.path,
-                "start_line": chunk.start_line,
-                "end_line": chunk.end_line,
-                "language": chunk.language,
-                "similarity": similarity,
-            }
+        return results
+
+
+async def get_file_chunks(repo: str, path: str) -> list[dict]:
+    """Return all indexed chunks for a specific repo-relative file path."""
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(CodeChunk)
+            .where(CodeChunk.repo_name == repo)
+            .where(CodeChunk.path == path)
+            .order_by(CodeChunk.start_line.asc(), CodeChunk.end_line.asc())
         )
+        result = await session.execute(stmt)
+        chunks = result.scalars().all()
 
-    results.sort(key=lambda x: x["similarity"], reverse=True)
-    return results
+    return [
+        {
+            "content": c.content,
+            "path": c.path,
+            "start_line": c.start_line,
+            "end_line": c.end_line,
+            "language": c.language,
+            "similarity": 1.0,
+        }
+        for c in chunks
+    ]
 
 
-def format_chunks_for_prompt(chunks: list[dict]) -> str:
-    if not chunks:
-        return "No relevant code found."
-    return "\n\n".join(
-        [
-            f"--- {chunk['path']} (lines {chunk['start_line']}-{chunk['end_line']}) ---\n{chunk['content']}"
-            for chunk in chunks
-        ]
+async def get_file_references(repo: str, path: str, n_results: int = 8) -> list[dict]:
+    """Find other indexed chunks that reference a specific file path or module name."""
+    basename = path.rsplit("/", 1)[-1]
+    stem = basename.rsplit(".", 1)[0] if "." in basename else basename
+    dotted = path.replace("/", ".")
+    module_path = dotted.rsplit(".", 1)[0] if "." in dotted else dotted
+
+    search_terms = []
+    for term in (path, basename, stem, dotted, module_path):
+        normalized = term.strip()
+        if normalized and normalized not in search_terms:
+            search_terms.append(normalized)
+
+    if not search_terms:
+        return []
+
+    conditions = [CodeChunk.content.ilike(f"%{term}%") for term in search_terms]
+
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(CodeChunk)
+            .where(CodeChunk.repo_name == repo)
+            .where(CodeChunk.path != path)
+            .where(or_(*conditions))
+            .order_by(CodeChunk.path.asc(), CodeChunk.start_line.asc())
+            .limit(n_results)
+        )
+        result = await session.execute(stmt)
+        chunks = result.scalars().all()
+
+    return [
+        {
+            "content": c.content,
+            "path": c.path,
+            "start_line": c.start_line,
+            "end_line": c.end_line,
+            "language": c.language,
+            "similarity": 1.0,
+        }
+        for c in chunks
+    ]
+
+
+def format_file_explanation_context(file_path: str, file_chunks: list[dict], references: list[dict]) -> str:
+    """Build grounded context for file explanation requests."""
+    parts = [f"Target file: {file_path}"]
+
+    if file_chunks:
+        parts.append("Indexed file content:")
+        for chunk in file_chunks:
+            parts.append(
+                f"--- {chunk['path']} (lines {chunk['start_line']}-{chunk['end_line']}) ---\n"
+                f"{chunk['content']}"
+            )
+
+    if references:
+        parts.append("Other indexed code that references this file or module:")
+        for ref in references:
+            excerpt = ref["content"][:500].strip()
+            parts.append(
+                f"--- {ref['path']} (lines {ref['start_line']}-{ref['end_line']}) ---\n"
+                f"{excerpt}"
+            )
+    else:
+        parts.append("Other indexed code that references this file or module: none found.")
+
+    parts.append(
+        "Use only the indexed code above. Explain what the file does, why it exists in PRGuard, "
+        "how it participates in repo analysis or other flows, and what depends on it if anything. "
+        "Do not use boilerplate headings or generic filler."
     )
 
+    return "\n\n".join(parts)
+
+
+# ── Format for LLM prompt ─────────────────────────────────────────────────────
+
+def format_chunks_for_prompt(chunks: list[dict]) -> str:
+    """
+    Format retrieved chunks into a clean string
+    to inject into the LLM prompt.
+    """
+    if not chunks:
+        return "No relevant code found."
+
+    parts = []
+    for chunk in chunks:
+        parts.append(
+            f"--- {chunk['path']} "
+            f"(lines {chunk['start_line']}-{chunk['end_line']}) ---\n"
+            f"{chunk['content']}"
+        )
+
+    return "\n\n".join(parts)
+
+
+# ── Check if repo is indexed ──────────────────────────────────────────────────
 
 async def is_indexed(repo: str) -> bool:
+    """Check if a repo has been indexed into pgvector."""
     try:
         async with AsyncSessionLocal() as session:
-            count = (
-                await session.execute(select(func.count(CodeChunk.id)).where(CodeChunk.repo_name == repo))
-            ).scalar() or 0
-            return int(count) > 0
+            stmt = select(func.count()).where(CodeChunk.repo_name == repo)
+            result = await session.execute(stmt)
+            count = result.scalar() or 0
+            return count > 0
     except Exception:
-        logger.exception("Failed to check index status for repo=%s", repo)
+        logger.exception(f"Failed to check index status for repo={repo}")
         return False
 
 
 async def get_index_stats(repo: str) -> dict:
+    """Get stats about a repo's index."""
     try:
         async with AsyncSessionLocal() as session:
-            count = (
-                await session.execute(select(func.count(CodeChunk.id)).where(CodeChunk.repo_name == repo))
-            ).scalar() or 0
-            count = int(count)
-            return {"repo": repo, "chunks": count, "indexed": count > 0}
-    except Exception as exc:
-        logger.exception("Failed to get index stats for repo=%s: %s", repo, exc)
+            stmt = select(func.count()).where(CodeChunk.repo_name == repo)
+            result = await session.execute(stmt)
+            count = result.scalar() or 0
+            return {
+                "repo": repo,
+                "chunks": count,
+                "indexed": count > 0
+            }
+    except Exception as e:
+        logger.exception(f"Failed to get index stats for repo={repo}: {e}")
         return {"repo": repo, "chunks": 0, "indexed": False}

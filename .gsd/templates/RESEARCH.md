@@ -6,7 +6,7 @@
 ---
 phase: {N}
 researched_at: {YYYY-MM-DD}
-discovery_level: 0 | 1 | 2 | 3
+discovery_level: 1 | 2 | 3
 ---
 
 # Phase {N} Research
@@ -15,7 +15,7 @@ discovery_level: 0 | 1 | 2 | 3
 {What question is this research answering?}
 
 ## Discovery Level
-**Level {0|1|2|3}** — {No discovery needed | Quick verification | Standard research | Deep dive}
+**Level {1|2|3}** — {Quick verification | Standard research | Deep dive}
 
 ## Key Decisions
 
@@ -70,7 +70,6 @@ discovery_level: 0 | 1 | 2 | 3
 
 | Level | Time | Use When |
 |-------|------|----------|
-| 0 | 0 min | Already know the path; no external discovery needed |
 | 1 | 2-5 min | Single known library, confirming syntax |
 | 2 | 15-30 min | Choosing between options, new integration |
 | 3 | 1+ hour | Architectural decision, novel problem |

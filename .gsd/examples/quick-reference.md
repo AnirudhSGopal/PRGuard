@@ -19,7 +19,7 @@
 | Command | Args | Purpose |
 |---------|------|---------|
 | `/map` | - | Analyze codebase → ARCHITECTURE.md |
-| `/plan` | `[phase]` | Without arg: build/update roadmap from SPEC. With phase: create PLAN.md files for that phase |
+| `/plan` | `[phase]` | Create PLAN.md files for phase |
 | `/execute` | `phase [--gaps-only]` | Run plans with wave execution |
 | `/verify` | `phase` | Validate with empirical proof |
 | `/debug` | `description` | Systematic debugging |

@@ -1,17 +1,28 @@
 import json
 import hmac
 import hashlib
-from fastapi import APIRouter, Request, HTTPException, Header
+import asyncio
+from fastapi import APIRouter, Request, HTTPException, Header, Depends
+from fastapi.responses import JSONResponse
 from app.config import settings
 from app.services.diff_parser import get_diff_summary, parse_diff
-from app.services.queue import enqueue_pr_review
+import uuid
+from workers.review_worker import run_pr_review, run_index_repo
 from app.models.webhook import WebhookEvent
-from app.models.base import get_db
+from app.models.base import get_db, AsyncSessionLocal
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.middleware import logger
-from fastapi import Depends
 
 router = APIRouter()
+
+
+def _handle_task_error(task):
+    """Callback for asyncio tasks — logs unhandled exceptions."""
+    if task.exception():
+        logger.error(
+            f"Background task failed: {task.exception()}",
+            exc_info=task.exception(),
+        )
 
 
 # ── Signature verification ────────────────────────────────────────────────────
@@ -91,10 +102,12 @@ async def github_webhook(
 
     # 6. route to correct handler
     if x_github_event == "pull_request":
-        await _handle_pull_request(payload, repo_name, event.id, db)
+        task = asyncio.create_task(_handle_pull_request(payload, repo_name, event.id))
+        task.add_done_callback(_handle_task_error)
 
     elif x_github_event == "push":
-        await _handle_push(payload, repo_name, db)
+        task = asyncio.create_task(_handle_push(payload, repo_name))
+        task.add_done_callback(_handle_task_error)
 
     elif x_github_event == "issues":
         await _handle_issue(payload, repo_name, db)
@@ -103,11 +116,14 @@ async def github_webhook(
         return {"status": "pong", "message": "Webhook connected successfully"}
 
     # 7. respond with the processed event summary
-    return {
-        "status":  "accepted",
-        "event":   x_github_event,
-        "repo":    repo_name,
-    }
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status":  "accepted",
+            "event":   x_github_event,
+            "repo":    repo_name,
+        }
+    )
 
 
 # ── Pull request handler ──────────────────────────────────────────────────────
@@ -116,7 +132,6 @@ async def _handle_pull_request(
     payload:  dict,
     repo:     str,
     event_id: str,
-    db:       AsyncSession,
 ) -> None:
     """
     Handle pull_request webhook events.
@@ -136,26 +151,33 @@ async def _handle_pull_request(
         return
 
     # ── Attempt to find a token for this repo ──
-    token = await _find_token_for_repo(repo, db)
+    async with AsyncSessionLocal() as db:
+        token = await _find_token_for_repo(repo, db)
     provider = _get_default_provider()
     api_key  = _get_default_api_key(provider)
 
     if not token or not api_key:
         logger.warning(f"Skipping PR #{pr_number} in {repo}: Missing credentials (Token: {bool(token)}, AI Key: {bool(api_key)})")
-        await _update_event_status(db, event_id, "skipped_missing_credentials")
+        async with AsyncSessionLocal() as db:
+            await _update_event_status(db, event_id, "skipped_missing_credentials")
         return
 
     # queue the PR review — this is the heavy work
-    job_id = await enqueue_pr_review(
-        repo=repo,
-        pr_number=pr_number,
-        token=token,
-        provider=provider,
-        api_key=api_key,
+    job_id = str(uuid.uuid4())
+    task = asyncio.create_task(
+        run_pr_review(
+            repo=repo,
+            pr_number=pr_number,
+            token=token,
+            provider=provider,
+            api_key=api_key,
+        )
     )
+    task.add_done_callback(_handle_task_error)
 
     # update event status
-    await _update_event_status(db, event_id, f"queued:{job_id}")
+    async with AsyncSessionLocal() as db:
+        await _update_event_status(db, event_id, f"queued:{job_id}")
 
     logger.info(f"PR #{pr_number} review queued - job {job_id}")
 
@@ -165,7 +187,6 @@ async def _handle_pull_request(
 async def _handle_push(
     payload: dict,
     repo:    str,
-    db:      AsyncSession,
 ) -> None:
     """
     Handle push webhook events.
@@ -181,13 +202,15 @@ async def _handle_push(
     if not commits:
         return
 
-    token = await _find_token_for_repo(repo, db)
+    async with AsyncSessionLocal() as db:
+        token = await _find_token_for_repo(repo, db)
     if not token:
         return
 
     # queue re-indexing
-    from app.services.queue import enqueue_index_repo
-    job_id = await enqueue_index_repo(repo=repo, token=token)
+    job_id = str(uuid.uuid4())
+    task = asyncio.create_task(run_index_repo(repo=repo, token=token))
+    task.add_done_callback(_handle_task_error)
 
     logger.info(f"Push to {repo} - re-indexing queued job {job_id}")
 
@@ -236,26 +259,33 @@ async def _find_token_for_repo(repo: str, db: AsyncSession) -> str | None:
     """
     Find a valid GitHub token to act on this repository.
     Only use tokens from users who explicitly connected this repository.
+    Fetches the encrypted raw token and decrypts it for API use.
     """
     from app.models.user import User
     from app.models.repository import ConnectedRepository
+    from app.services.crypto import decrypt_secret
     from sqlalchemy import select
 
     stmt = (
-        select(User.access_token)
+        select(User.raw_github_token)
         .join(ConnectedRepository, User.id == ConnectedRepository.user_id)
-        .where(ConnectedRepository.repo_name == repo)
+        .where(
+            ConnectedRepository.repo_name == repo,
+            User.raw_github_token.isnot(None),
+        )
         .limit(1)
     )
     result = await db.execute(stmt)
-    token = result.scalar_one_or_none()
+    encrypted_token = result.scalar_one_or_none()
     
-    if token:
-        return token
+    if encrypted_token:
+        try:
+            return decrypt_secret(encrypted_token)
+        except Exception as e:
+            logger.error(f"Failed to decrypt token for repo {repo}: {e}")
+            return None
     
-    # 🕵️ Principal Engineer Note: Decoupled auth requires that someone manually 
-    # connected the repo. If no user has connected it, we DON'T have a token to 
-    # act on it. This prevents unauthorized bot activity.
+    # No user has connected this repo — we don't have a token to act on it.
     return None
 
 

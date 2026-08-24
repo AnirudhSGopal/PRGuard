@@ -1,9 +1,12 @@
 # ── Python ────────────────────────────────────────────────────────────────────
 venv/
+.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 dist/
+.pytest_cache/
+.ruff_cache/
 
 # ── Node ──────────────────────────────────────────────────────────────────────
 node_modules/
@@ -14,6 +17,7 @@ frontend/dist/
 backend/.env
 frontend/.env
 *.pem
+*.backup
 
 # ── Frontend-specific environment files ────────────────────────────────────────
 # These are local development files that contain dev URLs and should never be
@@ -35,10 +39,11 @@ frontend/.env.development.local
 # ── Logs & Debug ──────────────────────────────────────────────────────────────
 *.log
 *.txt
-!README.md
-!CONTRIBUTING.md
-!LICENSE.txt
 !requirements.txt
+
+# ── Documentation ─────────────────────────────────────────────────────────────
+*.md
+!README.md
 
 # ── Temp test/debug scripts ───────────────────────────────────────────────────
 check_db*.py
@@ -56,4 +61,7 @@ backend/chroma_db/
 *.sqlite3
 *.bin
 *.pickle
+scratch/
+brain/
+backend/scratch/
 

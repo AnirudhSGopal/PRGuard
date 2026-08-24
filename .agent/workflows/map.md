@@ -27,7 +27,6 @@ This workflow should be run BEFORE `/plan` on brownfield projects to give the pl
 **Outputs:**
 - `.gsd/ARCHITECTURE.md` — System design documentation
 - `.gsd/STACK.md` — Technology inventory
-- `.gsd/STATE.md` — Mapping status snapshot
 </context>
 
 <process>
@@ -43,14 +42,6 @@ $indicators = @(
     "package.json", "requirements.txt", "Cargo.toml", 
     "go.mod", "pom.xml", "*.csproj", "Gemfile"
 )
-$foundIndicator = $null
-foreach ($indicator in $indicators) {
-    if (Test-Path $indicator) { $foundIndicator = $indicator; break }
-}
-if (-not $foundIndicator) {
-    Write-Error "No project indicators found. Aborting /map."
-    exit 1
-}
 ```
 
 **Bash:**
@@ -58,14 +49,6 @@ if (-not $foundIndicator) {
 # Look for common project indicators
 indicators=("package.json" "requirements.txt" "Cargo.toml" 
     "go.mod" "pom.xml" "*.csproj" "Gemfile")
-found_indicator=""
-for i in "${indicators[@]}"; do
-  if ls $i >/dev/null 2>&1; then found_indicator="$i"; break; fi
-done
-if [ -z "$found_indicator" ]; then
-  echo "Error: No project indicators found. Aborting /map." >&2
-  exit 1
-fi
 ```
 
 Display banner:
@@ -138,7 +121,7 @@ Get-Content "package.json" | ConvertFrom-Json |
 
 **Bash:**
 ```bash
-# Node.js example. Prerequisites: jq must be installed (apt-get install jq / brew install jq).
+# Node.js example (requires jq)
 cat package.json | jq '.dependencies'
 ```
 
@@ -172,13 +155,13 @@ Search for:
 **PowerShell:**
 ```powershell
 # API calls
-Get-ChildItem -Path "src" -Recurse -File | Select-String -Pattern "fetch\(|axios\.|http\."
+Select-String -Path "src/**/*" -Pattern "fetch\(|axios\.|http\."
 
 # Database connections
-Get-ChildItem -Recurse -File | Select-String -Pattern "DATABASE_URL|mongodb|postgres|mysql"
+Select-String -Path "**/*" -Pattern "DATABASE_URL|mongodb|postgres|mysql"
 
 # Third-party services
-Get-ChildItem -Recurse -File | Select-String -Pattern "stripe|sendgrid|twilio|aws-sdk"
+Select-String -Path "**/*" -Pattern "stripe|sendgrid|twilio|aws-sdk"
 ```
 
 **Bash:**
@@ -209,10 +192,10 @@ Search for indicators:
 **PowerShell:**
 ```powershell
 # TODOs and FIXMEs
-Get-ChildItem -Path "src" -Recurse -File | Select-String -Pattern "TODO|FIXME|HACK|XXX"
+Select-String -Path "src/**/*" -Pattern "TODO|FIXME|HACK|XXX"
 
 # Deprecated markers
-Get-ChildItem -Recurse -File | Select-String -Pattern "@deprecated|DEPRECATED"
+Select-String -Path "**/*" -Pattern "@deprecated|DEPRECATED"
 ```
 
 **Bash:**
@@ -367,8 +350,6 @@ git commit -m "docs: map existing codebase"
 ---
 
 ## 10. Offer Next Steps
-
-See <offer_next> for details.
 
 </process>
 

@@ -1,14 +1,14 @@
 import { useContext, useState, useEffect, useRef } from 'react'
 import { ThemeContext } from '../App'
 import { getTheme } from '../utils/helpers'
-import { sendMessage as apiSendMessage, getScopedProvider, setScopedProvider } from '../api/client'
+import { sendMessage as apiSendMessage, getApiKeyStatus, getScopedProvider, setScopedProvider } from '../api/client'
 import { useApiKeyGuard } from '../hooks/useApiKeyGuard'
 import { useRepos } from '../hooks/useReviews'
 // ── Model options ─────────────────────────────────────────────────────────────
 const MODELS = [
-  { id: 'claude', label: 'Claude Sonnet 4', sub: 'Anthropic · Best for code' },
-  { id: 'gpt',    label: 'GPT-4o',          sub: 'OpenAI · Most popular' },
-  { id: 'gemini', label: 'Gemini 1.5 Pro',  sub: 'Google · Fast & Smart' },
+  { id: 'claude-3-5-sonnet-20240620', label: 'Claude Sonnet 3.5', sub: 'Anthropic · Best for code' },
+  { id: 'gpt-4o',                   label: 'GPT-4o',          sub: 'OpenAI · Most popular' },
+  { id: 'gemini-2.0-flash',          label: 'Gemini 2.0 Flash', sub: 'Google · Free tier friendly' },
 ]
 
 const SUGGESTED = [
@@ -19,10 +19,7 @@ const SUGGESTED = [
 ]
 
 const SYSTEM_PROMPT = (repo, issue, model) =>
-  `You are PRGuard AI, a codebase learning assistant.
-Repository: ${repo}${issue ? `\nFocused issue: #${issue.number} — "${issue.title}"` : ''}
-Model: ${model}
-Help developers understand codebases, fix issues, and contribute. Be concise and technical. Use markdown code blocks.`
+  `PRGuard AI assistant. Repo: ${repo}${issue ? `\nIssue: #${issue.number}` : ''}. Model: ${model}. Be concise.`
 
 // ── Content type detector ─────────────────────────────────────────────────────
 function healJson(str) {
@@ -222,7 +219,27 @@ function ImageBubble({ content, t, dark }) {
 // ── Plain text bubble ─────────────────────────────────────────────────────────
 function TextBubble({ content, t, dark, isUser }) {
   return (
-    <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: isUser ? '14px 4px 14px 14px' : '4px 14px 14px 14px', background: isUser ? (dark ? '#1e2535' : '#fef3c7') : (dark ? '#13161b' : '#fff'), border: `1px solid ${isUser ? (dark ? t.accent + '44' : '#d4860a44') : t.border}`, fontSize: 13, lineHeight: 1.65, color: t.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+    <div style={{ maxWidth: '100%', position: 'relative', padding: isUser ? '9px 13px' : '9px 36px 9px 13px', borderRadius: isUser ? '14px 4px 14px 14px' : '4px 14px 14px 14px', background: isUser ? (dark ? '#1e2535' : '#fef3c7') : (dark ? '#13161b' : '#fff'), border: `1px solid ${isUser ? (dark ? t.accent + '44' : '#d4860a44') : t.border}`, fontSize: 13, lineHeight: 1.65, color: t.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      {!isUser && (
+        <button 
+            onClick={(e) => {
+                navigator.clipboard.writeText(content);
+                const btn = e.currentTarget;
+                btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                btn.style.color = '#10b981';
+                setTimeout(() => { 
+                    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+                    btn.style.color = t.text3;
+                }, 2000);
+            }} 
+            style={{ position: 'absolute', top: 10, right: 10, background: 'transparent', border: 'none', cursor: 'pointer', color: t.text3, padding: 0, transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onMouseEnter={e => { e.currentTarget.style.color = t.text; }}
+            onMouseLeave={e => { if(e.currentTarget.style.color !== 'rgb(16, 185, 129)' && e.currentTarget.style.color !== '#10b981') { e.currentTarget.style.color = t.text3; } }}
+            title="Copy to clipboard"
+        >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        </button>
+      )}
       {content.split(/(```[\s\S]*?```)/g).map((part, i) => {
         if (part.startsWith('```') && part.endsWith('```')) {
           const code = part.slice(3, -3).replace(/^[a-z]+\n/, '')
@@ -272,7 +289,7 @@ function MessageBubble({ msg, t, dark, onFollowUp }) {
           <span style={{ fontSize: 9, color: msg.isError ? '#ef4444' : t.accentText, fontWeight: 700 }}>PG</span>
         </div>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: '80%' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: '80%', position: 'relative' }}>
         {renderContent()}
         {msg.isError && (
             <button onClick={() => onFollowUp("retry_last")} style={{ alignSelf: 'flex-start', padding: '4px 8px', fontSize: 10, background: dark ? '#2a1010' : '#fee2e2', color: '#ef4444', border: '1px solid #ef444466', borderRadius: 6, cursor: 'pointer', marginTop: 4 }}>
@@ -554,6 +571,7 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
   const [connectOpen, setConnectOpen] = useState(false)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   const [vizMode, setVizMode] = useState(false)
+  const [apiKeyStatus, setApiKeyStatus] = useState(null)
 
   const bottomRef = useRef(null)
   const textareaRef = useRef(null)
@@ -571,6 +589,25 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
       setNoKeyModal(true)
     }
   }, [hasKey, keyLoading])
+
+  useEffect(() => {
+    let mounted = true
+    const refreshApiKeyStatus = async () => {
+      try {
+        const status = await getApiKeyStatus()
+        if (mounted) setApiKeyStatus(status)
+      } catch {
+        if (mounted) setApiKeyStatus(null)
+      }
+    }
+
+    refreshApiKeyStatus()
+    window.addEventListener('prguard:api-keys-updated', refreshApiKeyStatus)
+    return () => {
+      mounted = false
+      window.removeEventListener('prguard:api-keys-updated', refreshApiKeyStatus)
+    }
+  }, [])
 
   // Sync selectedModel to localStorage for the API client
   useEffect(() => {
@@ -592,6 +629,25 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
     return () => clearInterval(timer)
   }, [selectedModel])
 
+  const resolveChatProvider = () => {
+    const configuredProviders = new Set((apiKeyStatus?.items || []).filter(item => item?.has_key).map(item => item.provider))
+    const activeProvider = apiKeyStatus?.active_provider || getScopedProvider() || 'claude'
+
+    if (configuredProviders.has(selectedModel.id)) {
+      return selectedModel.id
+    }
+
+    if (configuredProviders.has(activeProvider)) {
+      const found = MODELS.find(model => model.id === activeProvider)
+      if (found && found.id !== selectedModel.id) {
+        setSelectedModel(found)
+      }
+      return activeProvider
+    }
+
+    return null
+  }
+
   // ── Fresh Chat State ──────────────────────────────────────────────────────
   // Start a new conversation whenever the selected repository changes.
   useEffect(() => {
@@ -605,9 +661,9 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
   useEffect(() => {
     if (autoSend && chatInput?.trim()) {
       const timer = setTimeout(() => {
+        setAutoSend(false)
         if (selectedIssue) sendVisualization()
         else sendMessage(chatInput)
-        setAutoSend(false)
       }, 80)
       return () => clearTimeout(timer)
     }
@@ -615,7 +671,11 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
 
   useEffect(() => {
     if (chatInput && !autoSend) textareaRef.current?.focus()
-  }, [chatInput])
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
+    }
+  }, [chatInput, autoSend])
 
   useEffect(() => {
     const handler = (e) => {
@@ -636,9 +696,16 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
 
   // ── sendVisualization — calls backend ─────────────────────────────────────
   const sendVisualization = async () => {
-    if (!selectedRepo || loading) return
+    if (!selectedRepo || loading || activeRequestRef.current) return
     // ✅ Guard: no API key → show modal immediately, abort
     if (noKey) { setNoKeyModal(true); return }
+
+    const providerForRequest = resolveChatProvider()
+    if (!providerForRequest) {
+      setNoKeyModal(true)
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Add an API key before using chat.', isError: true }])
+      return
+    }
 
     const userMsg = {
       role: 'user',
@@ -679,7 +746,7 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
         selectedRepo,
         selectedIssue?.number || null,
         [],
-        { signal: controller.signal, provider: selectedModel.id },
+        { signal: controller.signal, provider: providerForRequest, model: selectedModel.id },
       )
       const assistantText = result?.message || result?.answer || ''
 
@@ -717,8 +784,19 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
   // ── sendMessage — calls backend ───────────────────────────────────────────
   const sendMessage = async (text, historyOverride = null) => {
     const content = (text ?? chatInput ?? '').trim()
-    if (!content || loading) return
+    if (!content || loading || activeRequestRef.current) return
+    if (!selectedRepo) {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Select a repository before sending a message.', isError: true }])
+      return
+    }
     if (noKey) { setNoKeyModal(true); return }
+
+    const providerForRequest = resolveChatProvider()
+    if (!providerForRequest) {
+      setNoKeyModal(true)
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Add an API key before using chat.', isError: true }])
+      return
+    }
 
 
     setChatInput('')
@@ -736,13 +814,17 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
     const controller = new AbortController()
     activeRequestRef.current = controller
 
+    const backendContent = attachedFiles.length > 0
+      ? `${content}\n\n[Attached: ${attachedFiles.map(f => f.name).join(', ')}]`
+      : content;
+
     try {
       const result = await apiSendMessage(
-        content,
+        backendContent,
         selectedRepo,
         selectedIssue?.number || null,
         effectiveHistory,
-        { signal: controller.signal, provider: selectedModel.id },
+        { signal: controller.signal, provider: providerForRequest, model: selectedModel.id },
       )
       const assistantText = result?.message || result?.answer || ''
 
@@ -762,7 +844,23 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
         setNoKeyModal(true)
         return
       }
-      setMessages(prev => [...prev, { role: 'assistant', content: `🚨 **Error**: ${err.message}`, isError: true }])
+
+      // Provider-specific error messages
+      const errMsg = err?.message || 'Unknown error'
+      const providerLabel = selectedModel?.label || providerForRequest || 'AI'
+      let displayMsg = ''
+      
+      if (errMsg.includes('503') || errMsg.toLowerCase().includes('unavailable') || errMsg.toLowerCase().includes('rate limit') || errMsg.toLowerCase().includes('quota')) {
+        displayMsg = `⏳ **${providerLabel} is temporarily unavailable** — The provider may be rate-limited or experiencing high demand. Try switching to a different provider or wait a moment.\n\n_Details: ${errMsg}_`
+      } else if (errMsg.includes('502') || errMsg.toLowerCase().includes('overloaded')) {
+        displayMsg = `⚠️ **Backend error** — The server is overloaded or restarting. Please try again in a moment.\n\n_Details: ${errMsg}_`
+      } else if (errMsg.includes('400') || errMsg.toLowerCase().includes('invalid')) {
+        displayMsg = `❌ **Invalid request to ${providerLabel}** — ${errMsg}`
+      } else {
+        displayMsg = `🚨 **Error from ${providerLabel}**: ${errMsg}`
+      }
+      
+      setMessages(prev => [...prev, { role: 'assistant', content: displayMsg, isError: true }])
     } finally {
       activeRequestRef.current = null
       setLoading(false)
@@ -948,10 +1046,15 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
 
             <textarea ref={textareaRef} value={chatInput ?? ''}
               onChange={e => setChatInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  if (e.repeat) return
+                  e.preventDefault()
+                  sendMessage()
+                }
+              }}
               placeholder={noKey ? "Please add an API key in settings to chat..." : "Ask anything about this codebase... or click an issue / file →"}
               disabled={noKey || loading}
-              rows={1}
               style={{ flex: 1, resize: 'none', outline: 'none', background: 'transparent', border: 'none', padding: '4px 4px', fontSize: 13, fontFamily: 'inherit', color: t.text, lineHeight: 1.55, maxHeight: 120, overflowY: 'auto', cursor: noKey ? 'not-allowed' : 'text', opacity: noKey ? 0.6 : 1 }} />
 
             <div style={{ position: 'relative', flexShrink: 0 }} ref={modelBtnRef}>
@@ -994,8 +1097,8 @@ export default function ChatPanel({ selectedRepo, selectedIssue, chatInput, setC
                 </svg>
               </button>
             ) : (
-              <button onClick={() => sendMessage()} disabled={noKey || !(chatInput ?? '').trim() || loading}
-                style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: (chatInput ?? '').trim() && !loading && !noKey ? 'pointer' : 'not-allowed', background: (chatInput ?? '').trim() && !loading && !noKey ? t.accent : (dark ? '#1e2535' : '#e8eaf0'), border: `1px solid ${(chatInput ?? '').trim() && !loading && !noKey ? t.accent : t.border}`, transition: 'all 0.15s', color: (chatInput ?? '').trim() && !loading && !noKey ? t.accentFg : t.text3 }}>
+              <button onClick={() => sendMessage()} disabled={noKey || !selectedRepo || !(chatInput ?? '').trim() || loading}
+                style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: (chatInput ?? '').trim() && !loading && !noKey && selectedRepo ? 'pointer' : 'not-allowed', background: (chatInput ?? '').trim() && !loading && !noKey && selectedRepo ? t.accent : (dark ? '#1e2535' : '#e8eaf0'), border: `1px solid ${(chatInput ?? '').trim() && !loading && !noKey && selectedRepo ? t.accent : t.border}`, transition: 'all 0.15s', color: (chatInput ?? '').trim() && !loading && !noKey && selectedRepo ? t.accentFg : t.text3 }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
                 </svg>

@@ -25,9 +25,8 @@
 
 <!-- Active todos below -->
 
-- [ ] Example todo item `medium` — YYYY-MM-DD
+- [ ] {Example todo item} `medium` — YYYY-MM-DD
 
 ---
 
 *Last updated: <!-- date -->*
-

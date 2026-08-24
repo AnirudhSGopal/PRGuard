@@ -18,6 +18,7 @@ class User(Base):
     api_key:      Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     avatar_url:   Mapped[Optional[str]] = mapped_column(String, nullable=True)
     access_token: Mapped[str] = mapped_column(String)
+    raw_github_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     session_token_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     is_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

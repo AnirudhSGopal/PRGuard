@@ -26,12 +26,24 @@ class SaveApiKeyRequest(BaseModel):
     make_active: bool = True
 
 
+class SaveApiKeyRequestV2(BaseModel):
+    provider: str
+    api_key: str
+    make_active: bool = True
+
+
 def _headers(token: str) -> dict:
     return {
         "Authorization": f"Bearer {token}",
         "Accept":        "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def _require_token(token: str | None) -> str:
+    if not token:
+        raise HTTPException(status_code=401, detail="GitHub token required for this action")
+    return token
 
 async def _require_authenticated_user(
     current_user: User = Depends(requireUser),
@@ -49,6 +61,33 @@ async def get_user_api_keys(
     return await list_user_key_statuses(db, user_id=user.id)
 
 
+@router.post("/api-keys")
+async def save_user_api_key_v2(
+    payload: SaveApiKeyRequestV2,
+    current_user: User = Depends(requireUser),
+    db: AsyncSession = Depends(get_db),
+):
+    user = current_user
+    normalized_provider = validate_provider_or_400(payload.provider)
+    print("RECEIVED KEY:", payload.api_key[:10], "user:", user.id)
+    result = await upsert_user_api_key(
+        db,
+        user_id=user.id,
+        provider=normalized_provider,
+        api_key=payload.api_key,
+        make_active=payload.make_active,
+    )
+    record_user_activity(user_id=user.id, username=user.username)
+    record_api_key_status(
+        user_id=user.id,
+        username=user.username,
+        provider=normalized_provider,
+        api_key_present=bool(payload.api_key),
+        validation_result="saved",
+    )
+    return result
+
+
 @router.put("/api-keys/{provider}")
 async def save_user_api_key(
     provider: str,
@@ -58,6 +97,7 @@ async def save_user_api_key(
 ):
     user = current_user
     normalized_provider = validate_provider_or_400(provider)
+    print("RECEIVED KEY:", payload.api_key[:10], "user:", user.id)
     result = await upsert_user_api_key(
         db,
         user_id=user.id,
@@ -111,6 +151,7 @@ async def remove_user_api_key(
 # ── Repos ────────────────────────────────────────────────────────────────────
 
 @router.get("/repos")
+@router.get("/repositories")
 async def get_repos(
     current_user: User = Depends(requireUser),
     db: AsyncSession = Depends(get_db),
@@ -389,12 +430,18 @@ def _build_tree(flat: list) -> list:
 
 
 
+import asyncio
+import uuid
+from workers.review_worker import run_index_repo, _job_status
 
-from app.services.queue import (
-    enqueue_index_repo,
-    get_job_status,
-    get_queue_stats,
-)
+
+def _handle_task_error(task):
+    """Callback for asyncio tasks — logs unhandled exceptions."""
+    if task.exception():
+        logger.error(
+            f"Background task failed: {task.exception()}",
+            exc_info=task.exception(),
+        )
 
 @router.post("/fork")
 async def fork_repo(
@@ -440,7 +487,9 @@ async def trigger_index(
     if not gh_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    job_id = await enqueue_index_repo(repo=repo, token=gh_token)
+    job_id = str(uuid.uuid4())
+    task = asyncio.create_task(run_index_repo(repo=repo, token=gh_token, job_id=job_id))
+    task.add_done_callback(_handle_task_error)
 
     return {
         "job_id":  job_id,
@@ -453,11 +502,21 @@ async def trigger_index(
 async def index_job_status(job_id: str, current_user: User = Depends(requireUser), gh_token: str = Cookie(default=None)):
     """Poll this endpoint to check indexing progress."""
     _require_token(gh_token)
-    return get_job_status(job_id)
+    status = _job_status.get(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {
+        "job_id": job_id,
+        **status,
+    }
 
 
 @router.get("/queue/stats")
 async def queue_stats(current_user: User = Depends(requireUser), gh_token: str = Cookie(default=None)):
     """Debug endpoint — see what's in the queues."""
     _require_token(gh_token)
-    return get_queue_stats()
+    return {
+        "indexing": {"queued": 0, "failed": 0, "started": 0},
+        "review": {"queued": 0, "failed": 0, "started": 0},
+        "note": "Jobs are now processed directly via asyncio (Redis/RQ removed).",
+    }

@@ -1,8 +1,6 @@
 # JOURNAL.md — Session Log
 
 > **Purpose**: Chronicle of work sessions for context continuity.
->
-> Use this for historical timeline. Keep current-next context in STATE.md.
 
 ---
 

@@ -109,13 +109,13 @@ def validate_environment(settings):
 
     if missing_auth:
         message = f"Auth environment is incomplete. Missing: {', '.join(missing_auth)}"
-        if settings.is_development():
+        if settings.ENVIRONMENT == "development":
             logger.warning(message)
         else:
             logger.critical(message)
             raise RuntimeError(message)
 
-    if not settings.is_development():
+    if settings.ENVIRONMENT == "production":
         placeholder_fields = {
             "DATABASE_URL": settings.DATABASE_URL,
             "APP_URL": settings.APP_URL,
@@ -141,13 +141,11 @@ def validate_environment(settings):
     if not settings.has_any_llm_key():
         message = (
             "At least one LLM API key is required via OPENAI_API_KEY, ANTHROPIC_API_KEY, "
-            "GEMINI_API_KEY, or LLM_API_KEY."
+            "or GEMINI_API_KEY."
         )
-        if settings.is_development():
+        if settings.ENVIRONMENT == "development":
             logger.warning(message)
         else:
             raise RuntimeError(message)
 
-    if not (settings.REDIS_URL or "").strip():
-        logger.warning("REDIS_URL is not configured. Queue/cache/session infra will run in degraded mode.")
 

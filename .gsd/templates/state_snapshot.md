@@ -62,7 +62,7 @@ status: {complete | partial | blocked}
 
 ## Risks & Technical Debt
 
-Write "None" if no risks exist; otherwise list each risk below.
+{None if clear}
 
 - ⚠️ {Risk or debt item 1}
 - ⚠️ {Risk or debt item 2}

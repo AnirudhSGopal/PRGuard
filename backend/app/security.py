@@ -3,8 +3,11 @@ import hmac
 import hashlib
 import base64
 import json
+import logging
 from app.config import settings
 from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
 
 
 def hash_access_token(access_token: str) -> str:
@@ -72,6 +75,8 @@ def create_github_oauth_url(frontend_origin: str = "") -> str:
 async def exchange_code_for_token(code: str) -> str | None:
     """Exchange OAuth code for a GitHub access token."""
 
+    redirect_uri = f"{settings.APP_URL}/auth/github/callback"
+
     async with httpx.AsyncClient(timeout=settings.HTTP_TIMEOUT) as client:
         resp = await client.post(
             "https://github.com/login/oauth/access_token",
@@ -83,11 +88,19 @@ async def exchange_code_for_token(code: str) -> str | None:
                 "client_id":     settings.GITHUB_CLIENT_ID,
                 "client_secret": settings.GITHUB_CLIENT_SECRET,
                 "code":          code,
+                "redirect_uri":  redirect_uri,
             },
         )
 
     data = resp.json()
-    return data.get("access_token")
+    token = data.get("access_token")
+    if not token:
+        logger.error(
+            "GitHub token exchange failed: %s (description: %s)",
+            data.get("error", "unknown"),
+            data.get("error_description", "no details"),
+        )
+    return token
 
 
 async def get_github_user(access_token: str) -> dict:

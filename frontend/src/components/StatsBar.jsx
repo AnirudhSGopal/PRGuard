@@ -34,6 +34,9 @@ export default function RepoList({
 
   useEffect(() => {
     const read = async () => {
+      // Only poll if the document is visible to save resources
+      if (document.visibilityState !== 'visible') return
+
       const saved = getScopedProvider()
       const normalized = saved === 'gpt4o' ? 'gpt' : saved
       const status = await getApiKeyStatus().catch(() => ({ has_any_key: false }))
@@ -42,9 +45,10 @@ export default function RepoList({
     }
     read()
     window.addEventListener('prguard:api-keys-updated', read)
-    const interval = setInterval(read, 8000)
+    const interval = setInterval(read, 30000) // Poll every 30s instead of 8s
     return () => { window.removeEventListener('prguard:api-keys-updated', read); clearInterval(interval) }
   }, [])
+
 
   const providerLabel = PROVIDERS.find(p => p.id === activeProvider)?.label ?? 'No provider'
 

@@ -1,6 +1,7 @@
 import time
 import logging
 import uuid
+import re
 from sqlalchemy import select
 from fastapi import Cookie, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,22 +39,36 @@ class GlobalHardenMiddleware(BaseHTTPMiddleware):
             )
             return response
 
+        except HTTPException as e:
+            # 3. Allow FastAPI's HTTPException handlers to work
+            raise e
+
         except Exception as e:
-            # 3. Handle failure
+            # 4. Handle generic failure
             process_time = time.time() - start_time
             error_id = str(uuid.uuid4())
             logger.exception(
                 f"CRITICAL ERROR [{error_id}] {request.method} {request.url.path} "
                 f"time={process_time:.3f}s"
             )
-            
+            # Sanitize the exception message to avoid leaking secrets (API keys, tokens)
+            raw_msg = str(e) or ""
+            # redact long alphanumeric sequences (likely keys) and common secret keywords
+            redacted = re.sub(r"[A-Za-z0-9_-]{20,}", "[REDACTED]", raw_msg)
+            for kw in ("api key", "x-api-key", "authorization", "bearer", "token", "secret", "password", "sk-"):
+                redacted = redacted.replace(kw, "[REDACTED]")
+            # truncate to reasonable length
+            safe_msg = (redacted[:300] + "...") if len(redacted) > 300 else redacted
+
             return JSONResponse(
                 status_code=500,
                 content={
                     "detail": "An internal server error occurred.",
                     "error_id": error_id,
+                    "message": safe_msg,
                 }
             )
+
 
 
 class AdminRoleMiddleware(BaseHTTPMiddleware):
@@ -120,24 +135,48 @@ async def requireAuth(
     return user
 
 
+async def get_optional_user(
+    user_token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE_NAME),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    raw_token = (user_token or "").strip()
+    if not raw_token:
+        return None
+
+    token_hash = hash_session_token(raw_token)
+    stmt = select(User).where(
+        User.session_token_hash == token_hash,
+        User.auth_provider == "github",
+        User.is_disabled.is_(False),
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def get_current_user(
     user_token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE_NAME),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     raw_token = (user_token or "").strip()
     if not raw_token:
+        logger.warning("[DEBUG] get_current_user: Missing user_token cookie")
         raise HTTPException(status_code=401, detail="User authentication required")
 
+    logger.info(f"[DEBUG] get_current_user: Authenticating token hash...")
+    token_hash = hash_session_token(raw_token)
     stmt = select(User).where(
-        User.session_token_hash == hash_session_token(raw_token),
-        User.role == "user",
+        User.session_token_hash == token_hash,
         User.auth_provider == "github",
         User.is_disabled.is_(False),
     )
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
+    
     if not user:
+        logger.warning(f"[DEBUG] get_current_user: No active user found for token hash {token_hash[:8]}...")
         raise HTTPException(status_code=401, detail="Invalid or expired user session")
+    
+    logger.info(f"[DEBUG] get_current_user: Authenticated user {user.username} (id={user.id})")
     return user
 
 
@@ -163,9 +202,12 @@ async def get_current_admin(
 
 
 async def requireUser(current_user: User = Depends(get_current_user)) -> User:
-    if (current_user.role or "").strip().lower() != "user":
+    role = (current_user.role or "").strip().lower()
+    if role not in {"user", "admin"}:
+        logger.warning(f"requireUser: User {current_user.username} has invalid role: {role}")
         raise HTTPException(status_code=403, detail="User access required")
     if (current_user.auth_provider or "").strip().lower() != "github":
+        logger.warning(f"requireUser: User {current_user.username} has invalid provider: {current_user.auth_provider}")
         raise HTTPException(status_code=403, detail="GitHub login required")
     return current_user
 

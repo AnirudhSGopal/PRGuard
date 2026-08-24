@@ -33,7 +33,9 @@ let providerCache = 'claude'
 
 const normalizeProvider = (provider) => {
   const normalized = (provider || '').trim().toLowerCase()
-  if (normalized === 'gpt4o') return 'gpt'
+  if (normalized.includes('gemini')) return 'gemini'
+  if (normalized.includes('gpt')) return 'gpt'
+  if (normalized.includes('claude')) return 'claude'
   return normalized || 'claude'
 }
 
@@ -51,10 +53,22 @@ export const clearScopedApiKey = () => {}
 
 // ── Global 401 handler ────────────────────────────────────────────────────────
 // Fires whenever any request gets a 401 so useAuth can react immediately
+const extractError = (err) => {
+  if (err?.code === 'ERR_CANCELED') return 'Request canceled by user.'
+  const data = err?.response?.data
+  // Prioritize detailed error message from backend
+  const detail = data?.detail || data?.error
+  if (detail) {
+    return typeof detail === 'string' ? detail : JSON.stringify(detail)
+  }
+  return err?.message || 'Unknown connection error.'
+}
+
 client.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error?.response?.status === 401) {
+    const errorMsg = extractError(error)
+    if (error?.response?.status === 401 && !errorMsg.toLowerCase().includes('api key')) {
       window.dispatchEvent(new CustomEvent('auth:expired'))
     }
     return Promise.reject(error)
@@ -130,6 +144,7 @@ export const sendMessage = async (message, repo, issueNumber, history = [], opti
       message,
       repo,
       provider,
+      model: options.model || null,
       issue_number: issueNumber || null,
       history: history.filter(m => !m.isError),
     }, {
@@ -147,21 +162,30 @@ export const sendMessage = async (message, repo, issueNumber, history = [], opti
     console.log('[Chat API] Response received', normalized)
     return normalized
   } catch (err) {
-    console.error('[Chat API] Error:', err)
+    const status = err?.response?.status;
+    if (!status) {
+      console.error('[Chat API] Network Error:', err)
+    }
     if (err?.code === 'ERR_CANCELED') {
       throw new Error('Request canceled by user.')
     }
-    const status = err?.response?.status
-    const errorMsg = err?.response?.data?.detail || err?.message || 'Connection error. Check your settings.'
+    const errorMsg = extractError(err)
     
     if (status === 502) {
       throw new Error('Backend server error (502). The application may be overloaded or restarting. Please try again in a moment.')
     } else if (status === 500) {
       throw new Error(`Server error: ${errorMsg}`)
     } else if (status === 401) {
+      if (String(errorMsg).toLowerCase().includes('api key')) {
+        throw new Error(errorMsg)
+      }
       throw new Error('Session expired. Please sign in again.')
     } else if (status === 403) {
       throw new Error('Repository not connected. Connect the repository in Dashboard and retry.')
+    } else if (status === 404) {
+      throw new Error(errorMsg)
+    } else if (status === 503) {
+      throw new Error(`AI provider temporarily unavailable: ${errorMsg}`)
     } else if (status === 400) {
       throw new Error(`Invalid request: ${errorMsg}`)
     }
@@ -196,25 +220,15 @@ export const getUserProfile = async () => {
   }
 }
 
-export const saveUserApiKey = async (provider, apiKey, makeActive = true) => {
+export const saveApiKey = async (provider, apiKey, makeActive = true) => {
   const normalized = normalizeProvider(provider)
-  const res = await client.post('/user/api-key', {
+  console.log("SAVING KEY:", apiKey.slice(0, 10), "provider:", normalized)
+  const res = await client.post('/api/api-keys', {
     provider: normalized,
     api_key: apiKey,
     make_active: makeActive,
   })
-  if (makeActive) {
-    providerCache = normalized
-  }
-  return res.data
-}
-
-export const saveApiKey = async (provider, apiKey, makeActive = true) => {
-  const normalized = normalizeProvider(provider)
-  const res = await client.put(`/api/api-keys/${normalized}`, {
-    api_key: apiKey,
-    make_active: makeActive,
-  })
+  console.log("SAVE RESPONSE:", res.status, res.data)
   if (makeActive) {
     providerCache = normalized
   }
