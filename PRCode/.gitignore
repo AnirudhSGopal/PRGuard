@@ -1,0 +1,61 @@
+# =========================
+# Secrets & keys
+# =========================
+backend/.env
+frontend/.env
+frontend/.env.local
+**/*.env
+**/.env.*
+
+# Keep tracked examples available for teammates.
+!backend/.env.example
+!frontend/.env.example
+
+# =========================
+# Python
+# =========================
+backend/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+backend/*.egg-info/
+backend/dist/
+backend/build/
+
+# =========================
+# Node / frontend
+# =========================
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.next/
+
+# =========================
+# Database & logs
+# =========================
+backend/*.db
+backend/prguard.db
+backend/server_log.txt
+backend/scratch/
+**/*.log
+
+# =========================
+# IDE & OS
+# =========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# =========================
+# Test / debug files
+# =========================
+backend/scratch/
+**/test_gemini_*.py
+**/trigger_chat.py
+**/audit_app.py
+**/fix_db.py
+**/walkthrough.md
+**/implementation_plan.md
+backend/venv/
+backend/chroma_db/
